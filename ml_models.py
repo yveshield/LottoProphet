@@ -192,6 +192,10 @@ class LotteryMLModels:
         # 将3D特征展平为2D，以便用于传统ML模型
         X_reshaped = X.reshape(X.shape[0], -1)
         
+        # 保存特征维度，用于预测时的兼容性检查
+        self.expected_feature_count = X_reshaped.shape[1]
+        self.log(f"特征维度: {self.expected_feature_count}")
+        
         # 数据标准化，仅对输入特征进行处理，不对标签进行处理
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X_reshaped)
@@ -918,12 +922,30 @@ class LotteryMLModels:
                 self.log(f"警告: {ball_type}球模型不支持序列化")
         
         # 保存特征缩放器
-        for ball_type in ['red', 'blue']:
-            if ball_type in self.scalers:
+        if 'X' in self.scalers:
+            # 保存X缩放器，这是在训练过程中创建的主要缩放器
+            x_scaler_path = os.path.join(model_dir, 'X_scaler.pkl')
+            with open(x_scaler_path, 'wb') as f:
+                pickle.dump(self.scalers['X'], f)
+            self.log(f"保存特征缩放器: {x_scaler_path}")
+            
+            # 将X缩放器复制到red和blue球的缩放器中
+            for ball_type in ['red', 'blue']:
+                self.scalers[ball_type] = self.scalers['X']
                 scaler_path = os.path.join(model_dir, f'{ball_type}_scaler.pkl')
                 with open(scaler_path, 'wb') as f:
-                    pickle.dump(self.scalers[ball_type], f)
+                    pickle.dump(self.scalers['X'], f)
                 self.log(f"保存{ball_type}球特征缩放器: {scaler_path}")
+        else:
+            # 保存单独的球缩放器（如果存在）
+            for ball_type in ['red', 'blue']:
+                if ball_type in self.scalers:
+                    scaler_path = os.path.join(model_dir, f'{ball_type}_scaler.pkl')
+                    with open(scaler_path, 'wb') as f:
+                        pickle.dump(self.scalers[ball_type], f)
+                    self.log(f"保存{ball_type}球特征缩放器: {scaler_path}")
+                else:
+                    self.log(f"警告: 没有找到{ball_type}球的特征缩放器")
         
         # 保存模型信息
         model_info = {
@@ -933,12 +955,211 @@ class LotteryMLModels:
             'created_at': time.strftime('%Y-%m-%d %H:%M:%S')
         }
         
+        # 添加特征数量信息
+        expected_feature_count = getattr(self, 'expected_feature_count', None)
+        if expected_feature_count:
+            model_info['expected_feature_count'] = expected_feature_count
+            self.log(f"保存特征数量信息: {expected_feature_count}")
+        
+        # 尝试从模型中获取特征数量信息
+        if 'red' in self.models:
+            model_obj = self.models['red']
+            # 处理不同类型的模型
+            if self.model_type == 'ensemble' and 'random_forest' in model_obj:
+                model_obj = model_obj['random_forest']
+                
+            if hasattr(model_obj, 'n_features_in_'):
+                model_info['n_features_in'] = model_obj.n_features_in_
+                self.log(f"从模型中获取的特征数量: {model_obj.n_features_in_}")
+            # 尝试获取更多的模型属性
+            elif hasattr(model_obj, 'estimators_') and model_obj.estimators_:
+                first_estimator = model_obj.estimators_[0]
+                if hasattr(first_estimator, 'n_features_in_'):
+                    model_info['n_features_in'] = first_estimator.n_features_in_
+                    self.log(f"从模型第一个估计器中获取的特征数量: {first_estimator.n_features_in_}")
+            # 最后尝试使用特征重要性的维度
+            elif hasattr(model_obj, 'feature_importances_') and hasattr(model_obj.feature_importances_, 'shape'):
+                model_info['n_features_in'] = model_obj.feature_importances_.shape[0]
+                self.log(f"从模型特征重要性中获取的特征数量: {model_obj.feature_importances_.shape[0]}")
+        
+        # 如果没有从任何源获取到特征数量，默认保存为70
+        if 'expected_feature_count' not in model_info and 'n_features_in' not in model_info:
+            model_info['expected_feature_count'] = 70
+            self.log(f"使用默认特征数量: 70")
+            
+        # 保存预测使用的预处理方法
+        model_info['feature_data'] = {
+            'window_size': self.feature_window,
+            'red_count': self.red_count,
+            'blue_count': self.blue_count,
+            'red_range': self.red_range,
+            'blue_range': self.blue_range
+        }
+        
         info_path = os.path.join(model_dir, 'model_info.json')
         with open(info_path, 'w') as f:
             json.dump(model_info, f, indent=4)
         
         self.log(f"保存模型信息: {info_path}")
         return True
+        
+    def load_models(self):
+        """
+        加载保存的模型和缩放器
+        
+        Returns:
+            bool: 是否成功加载模型
+        """
+        self.log(f"尝试加载{self.lottery_type}的{MODEL_TYPES[self.model_type]}模型...")
+        
+        # 对于期望值模型，使用特殊的加载方法
+        if self.model_type == 'expected_value' and EXPECTED_VALUE_MODEL_AVAILABLE:
+            self.log("尝试加载期望值模型...")
+            ev_model = ExpectedValueLotteryModel(
+                lottery_type=self.lottery_type,
+                log_callback=self.log,
+                use_gpu=self.use_gpu
+            )
+            
+            load_success = ev_model.load()
+            if load_success:
+                self.models['red'] = ev_model
+                self.models['blue'] = ev_model
+                self.raw_models['expected_value_model'] = ev_model
+                self.log("期望值模型加载成功")
+                return True
+            else:
+                self.log("期望值模型加载失败")
+                return False
+        
+        # 检查模型目录是否存在
+        model_dir = os.path.join(self.models_dir, self.model_type)
+        if not os.path.exists(model_dir):
+            self.log(f"模型目录不存在: {model_dir}")
+            return False
+        
+        # 检查模型信息文件是否存在
+        info_path = os.path.join(model_dir, 'model_info.json')
+        if not os.path.exists(info_path):
+            self.log(f"模型信息文件不存在: {info_path}")
+            return False
+        
+        # 加载模型信息
+        try:
+            with open(info_path, 'r') as f:
+                model_info = json.load(f)
+                
+            self.feature_window = model_info.get('feature_window', self.feature_window)
+            self.log(f"模型信息: 类型={model_info.get('model_type')}, 创建时间={model_info.get('created_at')}")
+            
+            # 加载特征数量信息
+            if 'expected_feature_count' in model_info:
+                self.expected_feature_count = model_info['expected_feature_count']
+                self.log(f"已加载特征数量信息: {self.expected_feature_count}")
+            elif 'n_features_in' in model_info:
+                self.expected_feature_count = model_info['n_features_in']
+                self.log(f"已加载特征数量信息(从n_features_in): {self.expected_feature_count}")
+            
+        except Exception as e:
+            self.log(f"加载模型信息失败: {e}")
+            return False
+        
+        # 加载X缩放器（通用特征缩放器）
+        x_scaler_path = os.path.join(model_dir, 'X_scaler.pkl')
+        if os.path.exists(x_scaler_path):
+            try:
+                with open(x_scaler_path, 'rb') as f:
+                    self.scalers['X'] = pickle.load(f)
+                self.log(f"加载通用特征缩放器成功")
+                # 同时设置红蓝球的缩放器
+                self.scalers['red'] = self.scalers['X']
+                self.scalers['blue'] = self.scalers['X']
+            except Exception as e:
+                self.log(f"加载通用特征缩放器失败: {e}")
+                # 创建一个默认的缩放器
+                self.scalers['X'] = StandardScaler()
+                self.scalers['red'] = StandardScaler()
+                self.scalers['blue'] = StandardScaler()
+                self.log("创建了默认特征缩放器作为替代")
+        
+        # 加载红球和蓝球模型
+        models_loaded = True
+        for ball_type in ['red', 'blue']:
+            try:
+                if self.model_type == 'ensemble':
+                    # 对于集成模型，加载每个子模型
+                    self.models[ball_type] = {}
+                    ensemble_loaded = False
+                    for model_name in ['random_forest', 'gbdt', 'xgboost', 'lightgbm']:
+                        model_path = os.path.join(model_dir, f'{ball_type}_{model_name}_model.pkl')
+                        if os.path.exists(model_path):
+                            with open(model_path, 'rb') as f:
+                                self.models[ball_type][model_name] = pickle.load(f)
+                            self.log(f"加载{ball_type}球{model_name}模型成功")
+                            
+                            # 尝试从模型中获取特征数量
+                            if not hasattr(self, 'expected_feature_count'):
+                                model_obj = self.models[ball_type][model_name]
+                                if hasattr(model_obj, 'n_features_in_'):
+                                    self.expected_feature_count = model_obj.n_features_in_
+                                    self.log(f"从{model_name}模型中获取特征数量: {self.expected_feature_count}")
+                            
+                            ensemble_loaded = True
+                        else:
+                            self.log(f"警告: {ball_type}球{model_name}模型文件不存在")
+                    if not ensemble_loaded:
+                        models_loaded = False
+                else:
+                    # 对于其他模型，直接加载
+                    model_path = os.path.join(model_dir, f'{ball_type}_model.pkl')
+                    if os.path.exists(model_path):
+                        with open(model_path, 'rb') as f:
+                            self.models[ball_type] = pickle.load(f)
+                        self.log(f"加载{ball_type}球模型成功")
+                        
+                        # 尝试从模型中获取特征数量
+                        if not hasattr(self, 'expected_feature_count'):
+                            model_obj = self.models[ball_type]
+                            if hasattr(model_obj, 'n_features_in_'):
+                                self.expected_feature_count = model_obj.n_features_in_
+                                self.log(f"从模型中获取特征数量: {self.expected_feature_count}")
+                    else:
+                        self.log(f"警告: {ball_type}球模型文件不存在: {model_path}")
+                        models_loaded = False
+                
+                # 尝试加载特定的球特征缩放器(如果还没有通用缩放器的话)
+                if ball_type not in self.scalers:
+                    scaler_path = os.path.join(model_dir, f'{ball_type}_scaler.pkl')
+                    if os.path.exists(scaler_path):
+                        try:
+                            with open(scaler_path, 'rb') as f:
+                                self.scalers[ball_type] = pickle.load(f)
+                            self.log(f"加载{ball_type}球特征缩放器成功")
+                        except Exception as e:
+                            self.log(f"加载{ball_type}球特征缩放器失败: {e}")
+                            self.scalers[ball_type] = StandardScaler()
+                            self.log(f"创建了{ball_type}球默认特征缩放器作为替代")
+                    else:
+                        self.log(f"警告: {ball_type}球特征缩放器文件不存在")
+                        # 如果没有缩放器，创建一个默认的缩放器
+                        self.scalers[ball_type] = StandardScaler()
+                        self.log(f"创建了{ball_type}球默认特征缩放器作为替代")
+                        
+            except Exception as e:
+                self.log(f"加载{ball_type}球模型失败: {e}")
+                models_loaded = False
+        
+        # 如果所有模型都成功加载，返回True
+        if models_loaded:
+            self.log(f"{MODEL_TYPES[self.model_type]}模型加载成功")
+            return True
+        elif 'red' in self.models and 'blue' in self.models:
+            # 即使有警告，只要基础模型存在，我们也认为模型可用
+            self.log(f"{MODEL_TYPES[self.model_type]}模型加载成功，但有一些警告")
+            return True
+        else:
+            self.log(f"{MODEL_TYPES[self.model_type]}模型加载失败")
+            return False
         
     def predict(self, recent_data):
         """
@@ -1002,6 +1223,11 @@ class LotteryMLModels:
             self.log("期望值模型预测失败")
             return None, None
         
+        # 确保模型已加载
+        if 'red' not in self.models or 'blue' not in self.models:
+            self.log("模型未加载，无法预测")
+            return None, None
+        
         # 对于其他模型的处理保持不变
         # 提取红蓝球列名
         if self.lottery_type == 'dlt':
@@ -1036,46 +1262,130 @@ class LotteryMLModels:
         X = np.array(X_data)
         
         # 重塑特征以适合模型
-        X = X.reshape(X.shape[0], -1)
+        X_reshaped = X.reshape(X.shape[0], -1)
         
-        # 确保模型已加载
-        if 'red' not in self.models or 'blue' not in self.models:
-            self.log("模型未加载，无法预测")
-            return None, None
+        # 获取模型详细信息以进行调试
+        red_model_info = ""
+        if 'red' in self.models:
+            if self.model_type == 'ensemble':
+                if 'random_forest' in self.models['red']:
+                    red_model_info = f"特征数量: {getattr(self.models['red']['random_forest'], 'n_features_in_', '未知')}, 类型: {type(self.models['red']['random_forest']).__name__}"
+            else:
+                red_model_info = f"特征数量: {getattr(self.models['red'], 'n_features_in_', '未知')}, 类型: {type(self.models['red']).__name__}"
+        self.log(f"红球模型信息: {red_model_info}")
         
-        # 预测红球
-        red_pred = self.models['red'].predict(X)[0]
-        if self.model_type == 'ensemble':
-            # 集成模型需要单独处理
-            red_votes = {}
-            for name, model in self.models['red'].items():
-                preds = model.predict(X)[0]
-                for pred in preds:
-                    if pred not in red_votes:
-                        red_votes[pred] = 0
-                    red_votes[pred] += 1
-            red_predictions = sorted(red_votes.items(), key=lambda x: x[1], reverse=True)[:self.red_count]
-            red_predictions = [p[0] + 1 for p in red_predictions]  # +1 转回原始号码范围
-        else:
-            # 单一模型预测
-            red_predictions = [int(red_pred) + 1]  # +1 转回原始号码范围
+        # 检查特征数量是否与训练时的特征数量匹配
+        # 从模型信息或模型本身获取预期的特征数量
+        expected_features = getattr(self, 'expected_feature_count', 70)  # 默认70，与训练时保持一致
         
-        # 预测蓝球
-        blue_pred = self.models['blue'].predict(X)[0]
-        if self.model_type == 'ensemble':
-            # 集成模型需要单独处理
-            blue_votes = {}
-            for name, model in self.models['blue'].items():
-                preds = model.predict(X)[0]
-                for pred in preds:
-                    if pred not in blue_votes:
-                        blue_votes[pred] = 0
-                    blue_votes[pred] += 1
-            blue_predictions = sorted(blue_votes.items(), key=lambda x: x[1], reverse=True)[:self.blue_count]
-            blue_predictions = [p[0] + 1 for p in blue_predictions]  # +1 转回原始号码范围
-        else:
-            # 单一模型预测
-            blue_predictions = [int(blue_pred) + 1]  # +1 转回原始号码范围
+        # 也可以尝试从模型中获取
+        if 'red' in self.models:
+            model_obj = self.models['red']
+            # 处理不同类型的模型
+            if self.model_type == 'ensemble' and 'random_forest' in model_obj:
+                model_obj = model_obj['random_forest']
+                
+            if hasattr(model_obj, 'n_features_in_'):
+                expected_features = model_obj.n_features_in_
+                self.log(f"从模型中获取的特征数量: {expected_features}")
+            elif hasattr(model_obj, 'feature_importances_') and hasattr(model_obj.feature_importances_, 'shape'):
+                expected_features = model_obj.feature_importances_.shape[0]
+                self.log(f"从模型特征重要性中获取的特征数量: {expected_features}")
+            # 尝试获取更多的模型属性
+            elif hasattr(model_obj, 'estimators_') and model_obj.estimators_:
+                first_estimator = model_obj.estimators_[0]
+                if hasattr(first_estimator, 'n_features_in_'):
+                    expected_features = first_estimator.n_features_in_
+                    self.log(f"从模型第一个估计器中获取的特征数量: {expected_features}")
+        
+        actual_features = X_reshaped.shape[1]
+        
+        if actual_features != expected_features:
+            self.log(f"警告: 特征数量不匹配，预期{expected_features}个，实际{actual_features}个")
+            # 根据情况补充或截断特征
+            if actual_features < expected_features:
+                # 如果特征不足，填充零
+                padding = np.zeros((X_reshaped.shape[0], expected_features - actual_features))
+                X_reshaped = np.concatenate([X_reshaped, padding], axis=1)
+                self.log(f"已将特征填充至{X_reshaped.shape[1]}个")
+            else:
+                # 如果特征过多，截断
+                X_reshaped = X_reshaped[:, :expected_features]
+                self.log(f"已将特征截断至{X_reshaped.shape[1]}个")
+        
+        # 应用特征缩放
+        try:
+            if 'X' in self.scalers:
+                X_scaled = self.scalers['X'].transform(X_reshaped)
+                self.log("使用通用特征缩放器进行预测")
+            else:
+                # 回退到红球缩放器
+                X_scaled = self.scalers['red'].transform(X_reshaped)
+                self.log("使用红球特征缩放器进行预测")
+        except Exception as e:
+            self.log(f"应用特征缩放时出错: {e}")
+            self.log("使用未缩放的特征进行预测")
+            X_scaled = X_reshaped
+        
+        try:
+            # 预测红球
+            red_pred = self.models['red'].predict(X_scaled)[0]
+            if self.model_type == 'ensemble':
+                # 集成模型需要单独处理
+                red_votes = {}
+                for name, model in self.models['red'].items():
+                    preds = model.predict(X_scaled)[0]
+                    if hasattr(preds, "__iter__"):
+                        for pred in preds:
+                            if pred not in red_votes:
+                                red_votes[pred] = 0
+                            red_votes[pred] += 1
+                    else:
+                        # 单一预测值
+                        if preds not in red_votes:
+                            red_votes[preds] = 0
+                        red_votes[preds] += 1
+                red_predictions = sorted(red_votes.items(), key=lambda x: x[1], reverse=True)[:self.red_count]
+                red_predictions = [p[0] + 1 for p in red_predictions]  # +1 转回原始号码范围
+            else:
+                # 单一模型预测
+                if hasattr(red_pred, "__iter__"):
+                    red_predictions = [int(p) + 1 for p in red_pred]  # +1 转回原始号码范围
+                else:
+                    red_predictions = [int(red_pred) + 1]  # +1 转回原始号码范围
+            
+            # 预测蓝球
+            blue_pred = self.models['blue'].predict(X_scaled)[0]
+            if self.model_type == 'ensemble':
+                # 集成模型需要单独处理
+                blue_votes = {}
+                for name, model in self.models['blue'].items():
+                    preds = model.predict(X_scaled)[0]
+                    if hasattr(preds, "__iter__"):
+                        for pred in preds:
+                            if pred not in blue_votes:
+                                blue_votes[pred] = 0
+                            blue_votes[pred] += 1
+                    else:
+                        # 单一预测值
+                        if preds not in blue_votes:
+                            blue_votes[preds] = 0
+                        blue_votes[preds] += 1
+                blue_predictions = sorted(blue_votes.items(), key=lambda x: x[1], reverse=True)[:self.blue_count]
+                blue_predictions = [p[0] + 1 for p in blue_predictions]  # +1 转回原始号码范围
+            else:
+                # 单一模型预测
+                if hasattr(blue_pred, "__iter__"):
+                    blue_predictions = [int(p) + 1 for p in blue_pred]  # +1 转回原始号码范围
+                else:
+                    blue_predictions = [int(blue_pred) + 1]  # +1 转回原始号码范围
+        except Exception as e:
+            self.log(f"预测过程中出错: {e}")
+            import traceback
+            self.log(traceback.format_exc())
+            # 出错时返回随机号码
+            red_predictions = []
+            blue_predictions = []
             
         # 生成完整号码集
         while len(red_predictions) < self.red_count:
