@@ -64,11 +64,9 @@ LottoProphet/
 只需要运行main.py（ssq_history.csv，ssq_model.pth，scaler_X.pkl等都会通过调用自动生成 ）
 
 ## 软件截图
-![原始界面](https://github.com/user-attachments/assets/e7e8bc1e-3f4f-472b-91ed-303fce6d3b01)
-
 > **注意**: 最新版本(2025年3月22日更新)已优化UI界面，使用QTabWidget分离预测和分析功能。如下
-![分析界面](https://github.com/user-attachments/assets/4e986db9-83fd-4650-92c2-b91d4dbbcb41) 
-![预测界面](https://github.com/user-attachments/assets/b2ce1770-b6fc-4df2-b2c5-f14b008ef42f)
+![分析界面](![image](https://github.com/user-attachments/assets/187a8e17-fb40-4cc1-9892-36fa1401d386)
+![预测界面](![image](https://github.com/user-attachments/assets/faec6855-2599-46c6-b78f-292748130c12)
 
 # 彩票预测应用程序整体流程
 
@@ -100,7 +98,7 @@ LottoProphet/
 
 ### 主应用程序
 
-- **主界面 (`lottery_predictor_app_new.py`)**
+- **主界面 (`lottery_predictor_app_new.py/main.py`)**
     - 提供用户界面，选择彩票类型（双色球或大乐透）。
     - 输入特征值并选择生成的预测数量。
     - 按钮操作：
