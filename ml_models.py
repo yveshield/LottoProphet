@@ -57,6 +57,44 @@ if CATBOOST_AVAILABLE:
 if EXPECTED_VALUE_MODEL_AVAILABLE:
     MODEL_TYPES['expected_value'] = '期望值模型'
 
+class WrappedXGBoostModel:
+    def __init__(self, model, processor):
+        self.model = model
+        self.process_prediction = processor
+        
+    def predict(self, data):
+        if not isinstance(data, xgb.DMatrix):
+            data = xgb.DMatrix(data)
+        raw_preds = self.model.predict(data)
+        return self.process_prediction(raw_preds)
+
+class WrappedGBDTModel:
+    def __init__(self, model, processor):
+        self.model = model
+        self.process_prediction = processor
+        
+    def predict(self, data):
+        raw_preds = self.model.predict_proba(data)
+        return self.process_prediction(raw_preds)
+
+class WrappedLightGBMModel:
+    def __init__(self, model, processor):
+        self.model = model
+        self.process_prediction = processor
+        
+    def predict(self, data):
+        raw_preds = self.model.predict(data)
+        return self.process_prediction(raw_preds)
+
+class WrappedCatBoostModel:
+    def __init__(self, model, processor):
+        self.model = model
+        self.process_prediction = processor
+        
+    def predict(self, data):
+        raw_preds = self.model.predict(data)
+        return self.process_prediction(raw_preds)
+
 class LotteryMLModels:
     """彩票预测机器学习模型类"""
     
@@ -354,18 +392,6 @@ class LotteryMLModels:
         self.raw_models[f'xgboost_{ball_type}'] = model
         
     
-        class WrappedXGBoostModel:
-            def __init__(self, model, processor):
-                self.model = model
-                self.process_prediction = processor
-                
-            def predict(self, data):
-                if not isinstance(data, xgb.DMatrix):
-                    data = xgb.DMatrix(data)
-                raw_preds = self.model.predict(data)
-                return self.process_prediction(raw_preds)
-        
-   
         wrapped_model = WrappedXGBoostModel(model, self.process_multidim_prediction)
         
         self.log(f"{ball_type}球XGBoost模型训练完成")
@@ -428,15 +454,6 @@ class LotteryMLModels:
                 self.log(f"  {i+1}. {feature}: {importance:.4f}")
         
         self.raw_models[f'gbdt_{ball_type}'] = model
-        
-        class WrappedGBDTModel:
-            def __init__(self, model, processor):
-                self.model = model
-                self.process_prediction = processor
-                
-            def predict(self, data):
-                raw_preds = model.predict_proba(data)
-                return self.process_prediction(raw_preds)
         
         wrapped_model = WrappedGBDTModel(model, self.process_multidim_prediction)
         
@@ -520,15 +537,6 @@ class LotteryMLModels:
                 self.log(f"获取LightGBM特征重要性时出错: {str(e)}")
         
         self.raw_models[f'lightgbm_{ball_type}'] = model
-        
-        class WrappedLightGBMModel:
-            def __init__(self, model, processor):
-                self.model = model
-                self.process_prediction = processor
-                
-            def predict(self, data):
-                raw_preds = self.model.predict(data)
-                return self.process_prediction(raw_preds)
         
         wrapped_model = WrappedLightGBMModel(model, self.process_multidim_prediction)
         
@@ -618,15 +626,6 @@ class LotteryMLModels:
                 self.log(f"获取CatBoost特征重要性时出错: {str(e)}")
             
             self.raw_models[f'catboost_{ball_type}'] = model
-            
-            class WrappedCatBoostModel:
-                def __init__(self, model, processor):
-                    self.model = model
-                    self.process_prediction = processor
-                    
-                def predict(self, data):
-                    raw_preds = self.model.predict(data)
-                    return self.process_prediction(raw_preds)
             
             wrapped_model = WrappedCatBoostModel(model, self.process_multidim_prediction)
             
