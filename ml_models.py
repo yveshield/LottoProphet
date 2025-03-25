@@ -828,9 +828,45 @@ class LotteryMLModels:
         red_accuracy = 0
         blue_accuracy = 0
         
-        
         if 'red' in self.models:
-            y_pred_red = self.models['red'].predict(X_test)
+            # 处理不同类型的模型
+            if self.model_type == 'ensemble':
+                # 集成模型需要单独处理，对每个子模型进行预测，然后进行投票
+                red_votes = {}
+                for model_name, model in self.models['red'].items():
+                    self.log(f"评估{model_name}模型...")
+                    try:
+                        y_pred = model.predict(X_test)
+                        
+                        # 预测结果处理，确保能够进行投票
+                        if len(y_pred.shape) > 1 and y_pred.shape[1] > 1:
+                            y_pred = np.argmax(y_pred, axis=1)
+                        
+                        # 记录每个样本的投票
+                        for i, pred in enumerate(y_pred):
+                            if i not in red_votes:
+                                red_votes[i] = {}
+                            if pred not in red_votes[i]:
+                                red_votes[i][pred] = 0
+                            red_votes[i][pred] += 1
+                    except Exception as e:
+                        self.log(f"评估{model_name}模型时出错: {e}")
+                
+                # 根据投票确定最终预测结果
+                y_pred_red = []
+                for i in range(len(X_test)):
+                    if i in red_votes and red_votes[i]:
+                        # 找出得票最多的类别
+                        pred_class = max(red_votes[i].items(), key=lambda x: x[1])[0]
+                        y_pred_red.append(pred_class)
+                    else:
+                        # 如果没有投票，默认预测0
+                        y_pred_red.append(0)
+                
+                y_pred_red = np.array(y_pred_red)
+            else:
+                # 单一模型
+                y_pred_red = self.models['red'].predict(X_test)
             
             if len(y_pred_red.shape) > 1 and y_pred_red.shape[1] > 1:
                 self.log(f"处理多维预测结果，形状: {y_pred_red.shape}")
@@ -845,7 +881,44 @@ class LotteryMLModels:
             self.log(f"红球预测准确率: {red_accuracy:.4f}")
         
         if 'blue' in self.models:
-            y_pred_blue = self.models['blue'].predict(X_test)
+            # 处理不同类型的模型
+            if self.model_type == 'ensemble':
+                # 集成模型需要单独处理，对每个子模型进行预测，然后进行投票
+                blue_votes = {}
+                for model_name, model in self.models['blue'].items():
+                    self.log(f"评估{model_name}模型...")
+                    try:
+                        y_pred = model.predict(X_test)
+                        
+                        # 预测结果处理，确保能够进行投票
+                        if len(y_pred.shape) > 1 and y_pred.shape[1] > 1:
+                            y_pred = np.argmax(y_pred, axis=1)
+                        
+                        # 记录每个样本的投票
+                        for i, pred in enumerate(y_pred):
+                            if i not in blue_votes:
+                                blue_votes[i] = {}
+                            if pred not in blue_votes[i]:
+                                blue_votes[i][pred] = 0
+                            blue_votes[i][pred] += 1
+                    except Exception as e:
+                        self.log(f"评估{model_name}模型时出错: {e}")
+                
+                # 根据投票确定最终预测结果
+                y_pred_blue = []
+                for i in range(len(X_test)):
+                    if i in blue_votes and blue_votes[i]:
+                        # 找出得票最多的类别
+                        pred_class = max(blue_votes[i].items(), key=lambda x: x[1])[0]
+                        y_pred_blue.append(pred_class)
+                    else:
+                        # 如果没有投票，默认预测0
+                        y_pred_blue.append(0)
+                
+                y_pred_blue = np.array(y_pred_blue)
+            else:
+                # 单一模型
+                y_pred_blue = self.models['blue'].predict(X_test)
             
             if len(y_pred_blue.shape) > 1 and y_pred_blue.shape[1] > 1:
                 self.log(f"处理多维预测结果，形状: {y_pred_blue.shape}")
