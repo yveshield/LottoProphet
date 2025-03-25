@@ -278,12 +278,12 @@ def calculate_column_statistics(numbers):
         result['mad'] = np.mean(np.abs(numbers - result['median']))
         result['sem'] = result['std'] / np.sqrt(len(numbers))
         
-        # 熵 (信息熵)
+   
         values, counts = np.unique(numbers, return_counts=True)
         probs = counts / len(numbers)
         result['entropy'] = -np.sum(probs * np.log2(probs))
         
-        # 正态性检验 (D'Agostino-Pearson test)
+     
         try:
             normality_test = stats.normaltest(numbers)
             result['normality_test'] = (normality_test.statistic, normality_test.pvalue)
@@ -291,9 +291,9 @@ def calculate_column_statistics(numbers):
             logger.warning(f"正态性检验失败: {str(e)}")
             result['normality_test'] = (np.nan, np.nan)
         
-        # 游程检验
+   
         try:
-            # 将数据转换为大于或小于中位数的序列
+          
             median = np.median(numbers)
             binary_seq = numbers > median
             runs_result = runs_test(binary_seq)
@@ -302,14 +302,14 @@ def calculate_column_statistics(numbers):
             logger.warning(f"游程检验失败: {str(e)}")
             result['runs_test'] = (np.nan, np.nan)
             
-        # 计算滞后1的自相关系数
+    
         try:
             if len(numbers) > 1:
-                # 使用pandas的自相关函数
+               
                 series = pd.Series(numbers)
                 result['autocorr'] = series.autocorr(lag=1)
-                if pd.isna(result['autocorr']):  # 如果返回NaN，使用备选方法
-                    # 使用numpy计算
+                if pd.isna(result['autocorr']):  
+                    
                     n = len(numbers)
                     mean = np.mean(numbers)
                     c0 = np.sum((numbers - mean) ** 2) / n
@@ -343,13 +343,13 @@ def plot_advanced_statistics(df, lottery_type, width=15, height=15, dpi=100):
     Returns:
         QPixmap: 包含统计图表的QPixmap对象
     """
-    # 创建图表
+ 
     fig = plt.figure(figsize=(width, height))
     
-    # 计算统计指标
+   
     stats_dict = calculate_advanced_statistics(df, lottery_type)
     
-    # 确定红球和蓝球的列名
+  
     if lottery_type == 'dlt':
         red_cols = [col for col in df.columns if col.startswith('红球_')][:5]
         blue_cols = [col for col in df.columns if col.startswith('蓝球_')][:2]
@@ -357,17 +357,17 @@ def plot_advanced_statistics(df, lottery_type, width=15, height=15, dpi=100):
         red_cols = [col for col in df.columns if col.startswith('红球_')][:6]
         blue_cols = [col for col in df.columns if col.startswith('蓝球')][:1]
     
-    # 创建子图网格 - 5行2列
+   
     gs = fig.add_gridspec(5, 2, height_ratios=[1, 1, 1, 1, 1])
     
-    # 1. 箱线图
+
     ax1 = fig.add_subplot(gs[0, :])
     data_to_plot = [df[col] for col in red_cols + blue_cols]
     ax1.boxplot(data_to_plot, labels=red_cols + blue_cols, notch=True)
     ax1.set_title('号码分布箱线图')
     ax1.set_ylabel('号码值')
     
-    # 2. 偏度和峰度对比图
+  
     ax2 = fig.add_subplot(gs[1, 0])
     skewness_data = [stats_dict[f'{col}_stats']['skewness'] for col in red_cols + blue_cols]
     kurtosis_data = [stats_dict[f'{col}_stats']['kurtosis'] for col in red_cols + blue_cols]
@@ -380,7 +380,7 @@ def plot_advanced_statistics(df, lottery_type, width=15, height=15, dpi=100):
     ax2.set_xticklabels(red_cols + blue_cols, rotation=45)
     ax2.legend()
     
-    # 3. 标准差和变异系数对比图
+  
     ax3 = fig.add_subplot(gs[1, 1])
     std_data = [stats_dict[f'{col}_stats']['std'] for col in red_cols + blue_cols]
     cv_data = [stats_dict[f'{col}_stats']['coefficient_of_variation'] for col in red_cols + blue_cols]
@@ -391,7 +391,7 @@ def plot_advanced_statistics(df, lottery_type, width=15, height=15, dpi=100):
     ax3.set_xticklabels(red_cols + blue_cols, rotation=45)
     ax3.legend()
     
-    # 4. 中位数绝对偏差和标准误
+   
     ax4 = fig.add_subplot(gs[2, 0])
     mad_data = [stats_dict[f'{col}_stats']['mad'] for col in red_cols + blue_cols]
     sem_data = [stats_dict[f'{col}_stats']['sem'] for col in red_cols + blue_cols]
@@ -402,7 +402,7 @@ def plot_advanced_statistics(df, lottery_type, width=15, height=15, dpi=100):
     ax4.set_xticklabels(red_cols + blue_cols, rotation=45)
     ax4.legend()
     
-    # 5. 熵值和自相关系数
+    
     ax5 = fig.add_subplot(gs[2, 1])
     entropy_data = [stats_dict[f'{col}_stats']['entropy'] for col in red_cols + blue_cols]
     autocorr_data = [stats_dict[f'{col}_stats']['autocorr'] for col in red_cols + blue_cols]
@@ -413,7 +413,7 @@ def plot_advanced_statistics(df, lottery_type, width=15, height=15, dpi=100):
     ax5.set_xticklabels(red_cols + blue_cols, rotation=45)
     ax5.legend()
     
-    # 6. 红球相关性热力图
+  
     ax6 = fig.add_subplot(gs[3, 0])
     try:
         sns.heatmap(stats_dict['correlations']['red'], annot=True, cmap='coolwarm', center=0, ax=ax6)
@@ -424,7 +424,7 @@ def plot_advanced_statistics(df, lottery_type, width=15, height=15, dpi=100):
                 transform=ax6.transAxes)
         ax6.set_title('红球相关性 - 出错')
     
-    # 7. 蓝球相关性热力图
+   
     ax7 = fig.add_subplot(gs[3, 1])
     try:
         if 'blue' in stats_dict['correlations']:
@@ -441,7 +441,7 @@ def plot_advanced_statistics(df, lottery_type, width=15, height=15, dpi=100):
                 transform=ax7.transAxes)
         ax7.set_title('蓝球相关性 - 出错')
     
-    # 8. 周期性分析
+ 
     ax8 = fig.add_subplot(gs[4, :])
     try:
         # 显示红蓝球周期性
@@ -465,10 +465,10 @@ def plot_advanced_statistics(df, lottery_type, width=15, height=15, dpi=100):
                 transform=ax8.transAxes)
         ax8.set_title('周期性分析 - 出错')
     
-    # 调整布局
+
     plt.tight_layout()
     
-    # 转换为QPixmap
+
     buf = BytesIO()
     plt.savefig(buf, format='png', dpi=dpi, bbox_inches='tight')
     plt.close()
@@ -494,10 +494,10 @@ def plot_distribution_analysis(df, lottery_type, width=15, height=12, dpi=100):
     Returns:
         QPixmap: 包含分布分析图表的QPixmap对象
     """
-    # 创建图表
+
     fig = plt.figure(figsize=(width, height))
     
-    # 确定红球和蓝球的列名
+ 
     if lottery_type == 'dlt':
         red_cols = [col for col in df.columns if col.startswith('红球_')][:5]
         blue_cols = [col for col in df.columns if col.startswith('蓝球_')][:2]
@@ -505,53 +505,51 @@ def plot_distribution_analysis(df, lottery_type, width=15, height=12, dpi=100):
         red_cols = [col for col in df.columns if col.startswith('红球_')][:6]
         blue_cols = [col for col in df.columns if col.startswith('蓝球')][:1]
     
-    # 创建子图网格
+  
     gs = fig.add_gridspec(3, 2)
     
-    # 1. 红球核密度估计图
+
     ax1 = fig.add_subplot(gs[0, 0])
     for col in red_cols:
         sns.kdeplot(data=df[col], label=col, ax=ax1)
     ax1.set_title('红球号码核密度估计')
     ax1.legend()
     
-    # 2. 蓝球核密度估计图
     ax2 = fig.add_subplot(gs[0, 1])
     for col in blue_cols:
         sns.kdeplot(data=df[col], label=col, ax=ax2)
     ax2.set_title('蓝球号码核密度估计')
     ax2.legend()
     
-    # 3. 红球Q-Q图
+ 
     ax3 = fig.add_subplot(gs[1, 0])
     for col in red_cols:
         stats.probplot(df[col], dist="norm", plot=ax3)
     ax3.set_title('红球号码Q-Q图')
     
-    # 4. 蓝球Q-Q图
+ 
     ax4 = fig.add_subplot(gs[1, 1])
     for col in blue_cols:
         stats.probplot(df[col], dist="norm", plot=ax4)
     ax4.set_title('蓝球号码Q-Q图')
     
-    # 5. 红球直方图
     ax5 = fig.add_subplot(gs[2, 0])
     for col in red_cols:
         plt.hist(df[col], bins=20, alpha=0.3, label=col)
     ax5.set_title('红球号码直方图')
     ax5.legend()
     
-    # 6. 蓝球直方图
+   
     ax6 = fig.add_subplot(gs[2, 1])
     for col in blue_cols:
         plt.hist(df[col], bins=20, alpha=0.3, label=col)
     ax6.set_title('蓝球号码直方图')
     ax6.legend()
     
-    # 调整布局
+ 
     plt.tight_layout()
     
-    # 转换为QPixmap
+ 
     buf = BytesIO()
     plt.savefig(buf, format='png', dpi=dpi, bbox_inches='tight')
     plt.close()

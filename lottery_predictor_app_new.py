@@ -35,7 +35,8 @@ from prediction_utils import (
 )
 from theme_manager import ThemeManager, CustomThemeDialog
 from ui_components import (
-    create_main_tab, create_analysis_tab, create_advanced_statistics_tab
+    create_main_tab, create_analysis_tab, create_advanced_statistics_tab,
+    create_expected_value_tab
 )
 from data_processing import (
     process_analysis_data, get_trend_features, prepare_recent_trend_data,
@@ -97,6 +98,10 @@ class LotteryPredictorApp(QMainWindow):
         
         # 连接日志框的自定义右键菜单信号
         self.log_box.customContextMenuRequested.connect(self.show_log_context_menu)
+        
+        # 连接期望值模型标签页的自定义右键菜单信号
+        if hasattr(self, 'ev_log_box'):
+            self.ev_log_box.customContextMenuRequested.connect(self.show_ev_log_context_menu)
 
     def initUI(self):
         self.setWindowTitle(f"彩票预测软件 - GPU: {self.cuda_info}")
@@ -104,7 +109,18 @@ class LotteryPredictorApp(QMainWindow):
         
         self.tab_widget = QTabWidget()
         
-        # 创建主标签页
+        # 创建期望值模型标签页 - 放在第二个位置
+        self.expectedvalue_tab = QWidget()
+        self.ev_predict_button, self.ev_train_button, self.ev_update_data_button, \
+        self.ev_lottery_combo, self.ev_prediction_spin, self.ev_gpu_checkbox, \
+        self.ev_result_label, self.ev_log_box = create_expected_value_tab(self.expectedvalue_tab)
+        
+        # 连接期望值模型标签页的信号和槽
+        self.ev_predict_button.clicked.connect(self.generate_ev_prediction)
+        self.ev_train_button.clicked.connect(self.train_ev_model)
+        self.ev_update_data_button.clicked.connect(self.update_lottery_data)
+        
+        # 创建主标签页 - 放在第一个位置
         self.main_tab = QWidget()
         self.predict_button, self.train_button, self.pause_button, self.analyze_button, self.update_data_button, \
         self.lottery_combo, self.prediction_spin, self.gpu_checkbox, self.result_label, self.log_box, \
@@ -141,8 +157,9 @@ class LotteryPredictorApp(QMainWindow):
         self.run_distribution_analysis_button.clicked.connect(self.run_distribution_analysis)
         self.show_stats_data_button.clicked.connect(self.show_statistics_data)
         
-        # 添加标签页
+        # 添加标签页 - 注意顺序调整：预测放在第一个，期望值放在第二个
         self.tab_widget.addTab(self.main_tab, "预测")
+        self.tab_widget.addTab(self.expectedvalue_tab, "期望值模型")
         self.tab_widget.addTab(self.analysis_tab, "数据分析")
         self.tab_widget.addTab(self.advanced_stats_tab, "高级统计")
         
@@ -335,30 +352,56 @@ class LotteryPredictorApp(QMainWindow):
                 
                 # 检查模型是否已经训练
                 if model_key not in self.ml_models:
-                    # 如果模型不存在，创建一个新实例并尝试加载
+                    self.log_emitter.new_log.emit(f"初始化 {MODEL_TYPES[model_type]} 模型...")
+                    
+                    # 如果模型不存在，创建一个新实例
+                    use_gpu = self.gpu_checkbox.isChecked()
                     self.ml_models[model_key] = LotteryMLModels(
                         lottery_type=lottery_type, 
                         model_type=model_type,
-                        log_callback=self.log_emitter.new_log.emit  # 添加日志回调
+                        log_callback=self.log_emitter.new_log.emit,  # 添加日志回调
+                        use_gpu=use_gpu
                     )
-                    if not self.ml_models[model_key].load_models():
-                        raise ValueError(f"模型{MODEL_TYPES[model_type]}尚未训练，请先训练模型。")
+                    
+                    # 特殊处理期望值模型
+                    if model_type == 'expected_value':
+                        self.log_emitter.new_log.emit(f"检查期望值模型文件...")
+                        
+                        # 检查期望值模型目录
+                        from expected_value_model import ExpectedValueLotteryModel
+                        
+                        # 直接创建期望值模型实例
+                        ev_model = ExpectedValueLotteryModel(
+                            lottery_type=lottery_type,
+                            log_callback=self.log_emitter.new_log.emit,
+                            use_gpu=use_gpu
+                        )
+                        
+                        # 尝试加载模型
+                        load_success = ev_model.load()
+                        if load_success:
+                            self.log_emitter.new_log.emit(f"期望值模型加载成功")
+                            # 将加载的模型设置到ml_models中
+                            self.ml_models[model_key].models = {'red': ev_model, 'blue': ev_model}
+                            self.ml_models[model_key].raw_models = {'expected_value_model': ev_model}
+                        else:
+                            raise ValueError(f"期望值模型加载失败，请先训练模型。")
+                    else:
+                        if not self.ml_models[model_key].load_models():
+                            raise ValueError(f"模型{MODEL_TYPES[model_type]}尚未训练，请先训练模型。")
                 
                 ml_model = self.ml_models[model_key]
                 self.log_emitter.new_log.emit(f"已加载 {MODEL_TYPES[model_type]} 模型 for {lottery_name}")
                 
-                # 加载近期数据用于预测
                 df = load_lottery_data(lottery_type)
                 recent_data = df.sort_values('期数', ascending=False).head(ml_model.feature_window)
                 
                 for i in range(num_predictions):
-                    # 生成预测
                     red_predictions, blue_predictions = ml_model.predict(recent_data)
                     
                     if red_predictions is None or blue_predictions is None:
                         raise ValueError(f"预测失败，请检查数据或重新训练模型。")
                     
-                    # 格式化显示结果
                     if lottery_type == "dlt":
                         result_text += f"  第 {i+1} 组: {' '.join(map(str, red_predictions))} + {' '.join(map(str, blue_predictions))}\n"
                     else:
@@ -367,7 +410,10 @@ class LotteryPredictorApp(QMainWindow):
             self.result_label.setText(result_text)
 
         except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
             self.log_emitter.new_log.emit(f"生成预测时出错: {e}")
+            self.log_emitter.new_log.emit(f"错误详情:\n{error_details}")
             self.result_label.setText(f"生成预测时出错: {e}")
 
     def update_log(self, text):
@@ -826,6 +872,241 @@ class LotteryPredictorApp(QMainWindow):
     def clear_log(self):
         """清除日志文本框的内容"""
         self.log_box.clear()
+
+    def generate_ev_prediction(self):
+        """使用期望值模型生成预测"""
+        selected_index = self.ev_lottery_combo.currentIndex()
+        selected_key = list(name_path.keys())[selected_index]
+        lottery_type = selected_key
+        lottery_name = name_path[selected_key]['name']
+        num_predictions = self.ev_prediction_spin.value()
+        
+        result_text = f"期望值模型预测的{num_predictions}个{lottery_name}号码：\n"
+        
+        try:
+            # 从expected_value_model.py导入模型
+            from expected_value_model import ExpectedValueLotteryModel
+            
+            # 清空日志
+            self.ev_log_box.clear()
+            self.ev_log_box.append(f"<b>===== {lottery_name}期望值预测计算过程 =====</b>")
+            
+            # 创建期望值模型实例
+            model = ExpectedValueLotteryModel(
+                lottery_type=lottery_type,
+                log_callback=lambda msg: self.ev_log_box.append(msg),
+                use_gpu=self.ev_gpu_checkbox.isChecked(),
+                verbose=True  # 启用详细日志
+            )
+            
+            self.ev_log_box.append(f"加载{lottery_name}期望值模型...")
+            
+            # 加载模型
+            if not model.load():
+                self.ev_log_box.append(f"<font color='red'>错误: 期望值模型未训练或加载失败，请先训练模型。</font>")
+                self.ev_result_label.setText(f"错误: 模型未训练或加载失败，请先训练模型。")
+                return
+            
+            # 加载最近数据用于预测
+            df = load_lottery_data(lottery_type)
+            if df is None or df.empty:
+                self.ev_log_box.append("<font color='red'>错误: 无法加载历史数据。</font>")
+                return
+                
+            recent_data = df.sort_values('期数', ascending=False).head(10)
+            self.ev_log_box.append(f"使用最近{len(recent_data)}期数据进行预测...")
+            
+            # 显示最近的开奖数据
+            self.ev_log_box.append("<b>最近的开奖数据：</b>")
+            for _, row in recent_data.head(5).iterrows():
+                if lottery_type == "dlt":
+                    ball_info = f"期数: {row['期数']} 红球: {row['红球_1']} {row['红球_2']} {row['红球_3']} {row['红球_4']} {row['红球_5']} 蓝球: {row['蓝球_1']} {row['蓝球_2']}"
+                else:
+                    ball_info = f"期数: {row['期数']} 红球: {row['红球_1']} {row['红球_2']} {row['红球_3']} {row['红球_4']} {row['红球_5']} {row['红球_6']} 蓝球: {row['蓝球_1']}"
+                self.ev_log_box.append(ball_info)
+            
+            # 显示概率分布
+            self.ev_log_box.append("<b>号码概率分布:</b>")
+            
+            # 红球概率分布
+            self.ev_log_box.append("<font color='red'><b>红球概率分布 (前10名):</b></font>")
+            sorted_red_probs = sorted(model.red_probs.items(), key=lambda x: x[1], reverse=True)
+            for num, prob in sorted_red_probs[:10]:
+                actual_num = num + 1  # 转换为1-based索引
+                self.ev_log_box.append(f"  {actual_num}号: {prob:.6f}")
+            
+            # 蓝球概率分布
+            if lottery_type == "dlt":
+                self.ev_log_box.append("<font color='blue'><b>蓝球概率分布:</b></font>")
+                sorted_blue_probs = sorted(model.blue_probs.items(), key=lambda x: x[1], reverse=True)
+                for num, prob in sorted_blue_probs:
+                    actual_num = num + 1  # 转换为1-based索引
+                    self.ev_log_box.append(f"  {actual_num}号: {prob:.6f}")
+            else:
+                self.ev_log_box.append("<font color='blue'><b>蓝球概率分布 (前5名):</b></font>")
+                sorted_blue_probs = sorted(model.blue_probs.items(), key=lambda x: x[1], reverse=True)
+                for num, prob in sorted_blue_probs[:5]:
+                    actual_num = num + 1  # 转换为1-based索引
+                    self.ev_log_box.append(f"  {actual_num}号: {prob:.6f}")
+            
+            # 生成预测
+            self.ev_log_box.append("<b>开始生成预测...</b>")
+            red_predictions, blue_predictions = model.predict(recent_data, num_predictions=num_predictions)
+            
+            # 显示预测过程
+            self.ev_log_box.append("<b>期望值计算过程:</b>")
+            self.ev_log_box.append("综合考虑历史数据频率、最近走势以及号码组合优势，计算每组号码的期望值")
+            self.ev_log_box.append("期望值 = 号码概率 * 潜在回报 - (1 - 号码概率) * 投入成本")
+            
+            # 格式化结果
+            self.ev_log_box.append("<b>生成的预测组合:</b>")
+            for i in range(num_predictions):
+                if lottery_type == "dlt":
+                    # 大乐透结果格式化：5个红球 + 2个蓝球
+                    red_balls = [int(num+1) for num in red_predictions[i]]  # 转换为1-based索引
+                    blue_balls = [int(num+1) for num in blue_predictions[i]]  # 转换为1-based索引
+                    
+                    # 排序
+                    red_balls.sort()
+                    blue_balls.sort()
+                    
+                    # 显示概率值
+                    red_probs_text = ", ".join([f"{rb}({model.red_probs[rb-1]:.4f})" for rb in red_balls])
+                    blue_probs_text = ", ".join([f"{bb}({model.blue_probs[bb-1]:.4f})" for bb in blue_balls])
+                    
+                    self.ev_log_box.append(f"<b>第 {i+1} 组:</b>")
+                    self.ev_log_box.append(f"  红球: {red_probs_text}")
+                    self.ev_log_box.append(f"  蓝球: {blue_probs_text}")
+                    
+                    result_text += f"  第 {i+1} 组: {' '.join(map(str, red_balls))} + {' '.join(map(str, blue_balls))}\n"
+                else:
+                    # 双色球结果格式化：6个红球 + 1个蓝球
+                    red_balls = [int(num+1) for num in red_predictions[i]]  # 转换为1-based索引
+                    blue_ball = int(blue_predictions[i][0])+1  # 转换为1-based索引
+                    
+                    # 排序红球
+                    red_balls.sort()
+                    
+                    # 显示概率值
+                    red_probs_text = ", ".join([f"{rb}({model.red_probs[rb-1]:.4f})" for rb in red_balls])
+                    blue_prob_text = f"{blue_ball}({model.blue_probs[blue_ball-1]:.4f})"
+                    
+                    self.ev_log_box.append(f"<b>第 {i+1} 组:</b>")
+                    self.ev_log_box.append(f"  红球: {red_probs_text}")
+                    self.ev_log_box.append(f"  蓝球: {blue_prob_text}")
+                    
+                    result_text += f"  第 {i+1} 组: {' '.join(map(str, red_balls))} + {blue_ball}\n"
+            
+            # 添加期望值分析总结
+            self.ev_log_box.append("<b>期望值分析总结:</b>")
+            self.ev_log_box.append("1. 各组号码都基于历史概率和期望值原理选取")
+            self.ev_log_box.append("2. 红球选择优先考虑历史频率较高且近期表现稳定的号码")
+            self.ev_log_box.append("3. 蓝球选择偏向于高概率且与红球组合优势较大的号码")
+            self.ev_log_box.append("4. 各组合之间保持一定差异性，增加中奖概率")
+            
+            self.ev_result_label.setText(result_text)
+            self.ev_log_box.append(f"<font color='green'>期望值模型预测完成，生成了{num_predictions}组预测结果。</font>")
+            
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            self.ev_log_box.append(f"<font color='red'>生成预测时出错: {e}</font>")
+            self.ev_log_box.append(f"<font color='red'>错误详情:</font>\n{error_details}")
+            self.ev_result_label.setText(f"生成预测时出错: {e}")
+    
+    def train_ev_model(self):
+        """训练期望值模型"""
+        selected_index = self.ev_lottery_combo.currentIndex()
+        selected_key = list(name_path.keys())[selected_index]
+        lottery_type = selected_key
+        lottery_name = name_path[selected_key]['name']
+        
+        # 检查GPU状态
+        use_gpu = self.ev_gpu_checkbox.isChecked()
+        if use_gpu and not torch.cuda.is_available():
+            self.ev_log_box.append("<font color='orange'>警告: GPU被选中但CUDA不可用，将使用CPU进行训练</font>")
+            use_gpu = False
+        elif use_gpu:
+            gpu_info = torch.cuda.get_device_name(0)
+            self.ev_log_box.append(f"<font color='green'>使用GPU训练: {gpu_info}</font>")
+        else:
+            self.ev_log_box.append("<font color='blue'>使用CPU训练</font>")
+        
+        self.ev_train_button.setEnabled(False)
+        self.ev_lottery_combo.setEnabled(False)
+        self.ev_gpu_checkbox.setEnabled(False)
+        
+        self.ev_log_box.clear()
+        self.ev_log_box.append(f"开始训练{lottery_name}期望值模型...")
+        
+        try:
+            # 从expected_value_model.py导入模型
+            from expected_value_model import ExpectedValueLotteryModel
+            
+            # 加载数据
+            df = load_lottery_data(lottery_type)
+            if df is None or df.empty:
+                self.ev_log_box.append("<font color='red'>错误: 无法加载历史数据。</font>")
+                self.ev_train_button.setEnabled(True)
+                self.ev_lottery_combo.setEnabled(True)
+                self.ev_gpu_checkbox.setEnabled(torch.cuda.is_available())
+                return
+            
+            self.ev_log_box.append(f"成功加载{len(df)}条历史数据")
+            
+            # 创建并训练模型
+            model = ExpectedValueLotteryModel(
+                lottery_type=lottery_type,
+                log_callback=lambda msg: self.ev_log_box.append(msg),
+                use_gpu=use_gpu
+            )
+            
+            # 训练模型
+            model.train(df)
+            
+            # 更新模型实例
+            model_key = f"{lottery_type}_expected_value"
+            self.ml_models[model_key] = LotteryMLModels(
+                lottery_type=lottery_type, 
+                model_type='expected_value',
+                log_callback=lambda msg: self.ev_log_box.append(msg),
+                use_gpu=use_gpu
+            )
+            
+            # 将训练好的期望值模型设置到ml_models中
+            self.ml_models[model_key].models = {'red': model, 'blue': model}
+            self.ml_models[model_key].raw_models = {'expected_value_model': model}
+            
+            self.ev_log_box.append(f"<font color='green'>{lottery_name}期望值模型训练完成！</font>")
+            
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            self.ev_log_box.append(f"<font color='red'>训练期望值模型时出错: {e}</font>")
+            self.ev_log_box.append(f"<font color='red'>错误详情:</font>\n{error_details}")
+        finally:
+            self.ev_train_button.setEnabled(True)
+            self.ev_lottery_combo.setEnabled(True)
+            self.ev_gpu_checkbox.setEnabled(torch.cuda.is_available())
+    
+    def show_ev_log_context_menu(self, position):
+        """
+        显示期望值模型日志文本框的右键菜单
+        
+        Args:
+            position: 鼠标右键点击的位置
+        """
+        context_menu = QMenu(self)
+        clear_action = QAction("清除日志", self)
+        clear_action.triggered.connect(self.clear_ev_log)
+        context_menu.addAction(clear_action)
+        
+        # 在鼠标位置显示菜单
+        context_menu.exec_(self.ev_log_box.mapToGlobal(position))
+
+    def clear_ev_log(self):
+        """清除期望值模型日志文本框的内容"""
+        self.ev_log_box.clear()
 
 def main():
     app = QApplication(sys.argv)

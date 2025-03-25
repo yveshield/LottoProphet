@@ -34,6 +34,13 @@ try:
 except ImportError:
     CATBOOST_AVAILABLE = False
 
+# 导入期望值模型
+try:
+    from expected_value_model import ExpectedValueLotteryModel
+    EXPECTED_VALUE_MODEL_AVAILABLE = True
+except ImportError:
+    EXPECTED_VALUE_MODEL_AVAILABLE = False
+
 # 定义支持的模型类型
 MODEL_TYPES = {
     'random_forest': '随机森林',
@@ -47,6 +54,8 @@ if LIGHTGBM_AVAILABLE:
     MODEL_TYPES['lightgbm'] = 'LightGBM'
 if CATBOOST_AVAILABLE:
     MODEL_TYPES['catboost'] = 'CatBoost'
+if EXPECTED_VALUE_MODEL_AVAILABLE:
+    MODEL_TYPES['expected_value'] = '期望值模型'
 
 class LotteryMLModels:
     """彩票预测机器学习模型类"""
@@ -71,40 +80,40 @@ class LotteryMLModels:
         self.log_callback = log_callback
         self.use_gpu = use_gpu
         
-        # 添加将要保存的原始模型
+     
         self.raw_models = {}
         
-        # 初始化logger
+   
         self.logger = logging.getLogger(f"ml_models_{lottery_type}")
         self.logger.setLevel(logging.INFO)
-        # 防止重复添加handler
+   
         if not self.logger.handlers:
             handler = logging.StreamHandler()
             formatter = logging.Formatter('%(message)s')
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
         
-        # 记录GPU使用情况
+     
         if self.use_gpu:
             self.log(f"ML模型使用GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else '不可用'}")
         else:
             self.log("ML模型使用CPU")
         
-        # 选择基于彩票类型的球号范围
+    
         if lottery_type == 'dlt':
-            # 大乐透: 5个红球(1-35)，2个蓝球(1-12)
+        
             self.red_range = 35
             self.blue_range = 12
             self.red_count = 5
             self.blue_count = 2
-        else:  # ssq
-            # 双色球: 6个红球(1-33)，1个蓝球(1-16)
+        else:  
+     
             self.red_range = 33
             self.blue_range = 16
             self.red_count = 6
             self.blue_count = 1
         
-        # 设置模型保存路径
+   
         self.models_dir = os.path.join(f'./model/{lottery_type}')
         os.makedirs(self.models_dir, exist_ok=True)
     
@@ -116,22 +125,22 @@ class LotteryMLModels:
     
     def prepare_data(self, df, test_size=0.2):
         """准备训练数据"""
-        # 提取数据
+    
         self.log("准备训练数据...")
         
-        # 特征窗口大小
+       
         window_size = self.feature_window
         
-        # 确保数据按期数排序
+   
         df = df.sort_values('期数').reset_index(drop=True)
         
-        # 提取红蓝球列名
+   
         if self.lottery_type == 'dlt':
             red_cols = [col for col in df.columns if col.startswith('红球_')][:5]
             blue_cols = [col for col in df.columns if col.startswith('蓝球_')][:2]
         else:  # ssq
             red_cols = [col for col in df.columns if col.startswith('红球_')][:6]
-            # 确保正确识别蓝球列，考虑两种可能的前缀格式
+  
             blue_cols = []
             for col in df.columns:
                 if col.startswith('蓝球_') or col == '蓝球':
@@ -141,13 +150,13 @@ class LotteryMLModels:
         
         self.feature_cols = red_cols + blue_cols
         
-        # 创建序列数据和标签
+     
         X_data = []
         y_red = []
         y_blue = []
         
         for i in range(len(df) - window_size):
-            # 创建特征序列
+
             features = []
             for j in range(window_size):
                 row_features = []
@@ -337,10 +346,10 @@ class LotteryMLModels:
             for i, (feature, score) in enumerate(sorted_importance[:10]):
                 self.log(f"  {i+1}. {feature}: {score:.4f}")
         
-        # 保存原始模型以便序列化
+    
         self.raw_models[f'xgboost_{ball_type}'] = model
         
-        # 使用类方法来包装模型预测，使其更容易序列化
+    
         class WrappedXGBoostModel:
             def __init__(self, model, processor):
                 self.model = model
@@ -352,7 +361,7 @@ class LotteryMLModels:
                 raw_preds = self.model.predict(data)
                 return self.process_prediction(raw_preds)
         
-        # 创建可序列化的包装模型
+   
         wrapped_model = WrappedXGBoostModel(model, self.process_multidim_prediction)
         
         self.log(f"{ball_type}球XGBoost模型训练完成")
@@ -365,7 +374,7 @@ class LotteryMLModels:
         self.log(f"训练{ball_type}球GBDT模型...")
         self.log(f"数据维度: 特征={X_train.shape}, 标签={y_train.shape}")
         
-        # 设置参数
+   
         params = {
             'n_estimators': 100,
             'learning_rate': 0.1,
@@ -376,17 +385,14 @@ class LotteryMLModels:
         
         self.log(f"GBDT参数: {params}")
         
-        # 创建模型
+  
         model = GradientBoostingClassifier(**params)
         
-        # 自定义warm_start策略来监控训练进度
         self.log(f"开始训练GBDT模型...")
         
-        # 使用分批训练方式来模拟进度报告
         n_estimators_per_batch = 10
         total_estimators = params['n_estimators']
         
-        # 创建带有较小estimators的初始模型
         init_model = GradientBoostingClassifier(
             n_estimators=n_estimators_per_batch,
             learning_rate=params['learning_rate'],
@@ -395,10 +401,8 @@ class LotteryMLModels:
             warm_start=True  # 允许增量训练
         )
         
-        # 初始训练
         init_model.fit(X_train, y_train)
         
-        # 逐步增加树的数量并继续训练
         for i in range(n_estimators_per_batch, total_estimators, n_estimators_per_batch):
             self.log(f"GBDT训练进度: {i}/{total_estimators} 棵树已完成 ({i/total_estimators*100:.1f}%)")
             init_model.n_estimators = min(i + n_estimators_per_batch, total_estimators)
@@ -406,10 +410,8 @@ class LotteryMLModels:
         
         self.log(f"GBDT训练进度: {total_estimators}/{total_estimators} 棵树已完成 (100%)")
         
-        # 最终模型就是增量训练后的模型
         model = init_model
         
-        # 输出特征重要性
         if hasattr(model, 'feature_importances_'):
             feature_names = [f"特征_{i}" for i in range(X_train.shape[1])]
             if len(self.feature_cols) == X_train.shape[1]:
@@ -421,21 +423,17 @@ class LotteryMLModels:
             for i, (feature, importance) in enumerate(importance_data[:10]):
                 self.log(f"  {i+1}. {feature}: {importance:.4f}")
         
-        # 保存原始模型以便序列化
         self.raw_models[f'gbdt_{ball_type}'] = model
         
-        # 使用类方法来包装模型预测，使其更容易序列化
         class WrappedGBDTModel:
             def __init__(self, model, processor):
                 self.model = model
                 self.process_prediction = processor
                 
             def predict(self, data):
-                # 使用probabilities而不是类别
                 raw_preds = model.predict_proba(data)
                 return self.process_prediction(raw_preds)
         
-        # 创建可序列化的包装模型
         wrapped_model = WrappedGBDTModel(model, self.process_multidim_prediction)
         
         self.log(f"{ball_type}球GBDT模型训练完成")
@@ -452,7 +450,6 @@ class LotteryMLModels:
         self.log(f"训练{ball_type}球LightGBM模型...")
         self.log(f"数据维度: 特征={X_train.shape}, 标签={y_train.shape}")
         
-        # 设置参数
         params = {
             'objective': 'multiclass',
             'num_class': self.red_range + 1 if ball_type == 'red' else self.blue_range + 1,
@@ -470,41 +467,31 @@ class LotteryMLModels:
         
         self.log(f"LightGBM参数: {params}")
         
-        # 如果使用GPU并且GPU可用，则添加GPU参数
         if self.use_gpu and torch.cuda.is_available():
             params['device'] = 'gpu'  # 使用GPU加速
             self.log("LightGBM使用GPU加速训练")
         
-        # 创建数据集
         train_data = lgb.Dataset(X_train, label=y_train)
         
-        # 设置评估列表，用于记录训练进度
         valid_sets = [train_data]
         valid_names = ['train']
         
-        # 创建更可靠的回调函数以显示进度
         def progress_callback(env):
-            # 确保每10次迭代或最后一次迭代时输出日志
             if env.iteration % 10 == 0 or env.iteration == env.end_iteration - 1:
                 try:
-                    # 获取评估结果
                     eval_result = env.evaluation_result_list
                     if eval_result and len(eval_result) > 0:
                         metric_name = eval_result[0][1]
                         metric_value = eval_result[0][2]
                         self.log(f"LightGBM迭代 {env.iteration+1}/{env.end_iteration}: {metric_name}={metric_value:.6f}")
                     else:
-                        # 如果无法获取评估结果，至少显示进度
                         self.log(f"LightGBM迭代 {env.iteration+1}/{env.end_iteration}")
                 except Exception as e:
-                    # 出错时记录错误并继续
                     self.log(f"记录LightGBM进度时出错: {str(e)}")
             return False
         
-        # 设置回调函数
         callbacks = [progress_callback]
         
-        # 训练模型
         self.log(f"开始训练LightGBM模型...")
         model = lgb.train(
             params, 
@@ -516,7 +503,6 @@ class LotteryMLModels:
             verbose_eval=False  # 禁用内置的输出，使用我们的回调
         )
         
-        # 输出特征重要性
         if hasattr(model, 'feature_importance'):
             try:
                 importances = model.feature_importance(importance_type='gain')
@@ -529,10 +515,8 @@ class LotteryMLModels:
             except Exception as e:
                 self.log(f"获取LightGBM特征重要性时出错: {str(e)}")
         
-        # 保存原始模型以便序列化
         self.raw_models[f'lightgbm_{ball_type}'] = model
         
-        # 使用类方法来包装模型预测，使其更容易序列化
         class WrappedLightGBMModel:
             def __init__(self, model, processor):
                 self.model = model
@@ -542,7 +526,6 @@ class LotteryMLModels:
                 raw_preds = self.model.predict(data)
                 return self.process_prediction(raw_preds)
         
-        # 创建可序列化的包装模型
         wrapped_model = WrappedLightGBMModel(model, self.process_multidim_prediction)
         
         self.log(f"{ball_type}球LightGBM模型训练完成")
@@ -559,7 +542,6 @@ class LotteryMLModels:
         self.log(f"训练{ball_type}球CatBoost模型...")
         self.log(f"数据维度: 特征={X_train.shape}, 标签={y_train.shape}")
         
-        # 设置参数
         params = {
             'loss_function': 'MultiClass',
             'classes_count': self.red_range + 1 if ball_type == 'red' else self.blue_range + 1,
@@ -573,12 +555,10 @@ class LotteryMLModels:
         
         self.log(f"CatBoost参数: {params}")
         
-        # 如果使用GPU并且GPU可用，则添加GPU参数
         if self.use_gpu and torch.cuda.is_available():
             params['task_type'] = 'GPU'  # 使用GPU加速
             self.log("CatBoost使用GPU加速训练")
         
-        # 创建更可靠的自定义日志记录器，将输出发送到UI
         class LoggerCallback(cb.callback.Callback):
             def __init__(self, log_func):
                 self.log_func = log_func
@@ -586,50 +566,39 @@ class LotteryMLModels:
                 
             def after_iteration(self, info):
                 iter_num = info.iteration
-                # 确保每10次迭代或最后一次迭代时输出日志
                 if iter_num % 10 == 0 or iter_num == info.metric_info['iterations'] - 1:
                     try:
-                        # 获取当前的评估指标
                         train_metrics = info.metrics.get('learn', {})
                         log_messages = []
                         
-                        # 生成进度信息
                         progress_msg = f"CatBoost迭代 {iter_num+1}/{info.metric_info['iterations']}"
                         log_messages.append(progress_msg)
                         
-                        # 添加指标信息
                         for metric_name, metric_values in train_metrics.items():
                             if len(metric_values) > 0:
                                 value = metric_values[-1]
                                 metric_msg = f"{metric_name}={value:.6f}"
                                 log_messages.append(metric_msg)
                         
-                        # 发送日志
                         if log_messages:
                             self.log_func(f"{': '.join(log_messages)}")
                         else:
-                            # 如果没有指标信息，只显示进度
                             self.log_func(progress_msg)
                         
                     except Exception as e:
-                        # 出错时记录错误并继续
                         self.log_func(f"记录CatBoost进度时出错: {str(e)}")
-                        # 至少显示基本进度信息
                         self.log_func(f"CatBoost迭代 {iter_num+1}/{info.metric_info['iterations']}")
                         
                 return True
         
-        # 创建回调列表
         callbacks = [LoggerCallback(self.log)]
         
-        # 训练模型
         self.log(f"开始训练CatBoost模型...")
         try:
             train_dataset = cb.Pool(X_train, y_train)
             model = cb.CatBoost(params)
             model.fit(train_dataset, callbacks=callbacks)
             
-            # 输出特征重要性
             try:
                 feature_importances = model.get_feature_importance()
                 feature_names = [f"特征_{i}" for i in range(X_train.shape[1])]
@@ -644,10 +613,8 @@ class LotteryMLModels:
             except Exception as e:
                 self.log(f"获取CatBoost特征重要性时出错: {str(e)}")
             
-            # 保存原始模型以便序列化
             self.raw_models[f'catboost_{ball_type}'] = model
             
-            # 使用类方法来包装模型预测，使其更容易序列化
             class WrappedCatBoostModel:
                 def __init__(self, model, processor):
                     self.model = model
@@ -657,7 +624,6 @@ class LotteryMLModels:
                     raw_preds = self.model.predict(data)
                     return self.process_prediction(raw_preds)
             
-            # 创建可序列化的包装模型
             wrapped_model = WrappedCatBoostModel(model, self.process_multidim_prediction)
             
             self.log(f"{ball_type}球CatBoost模型训练完成")
@@ -674,14 +640,13 @@ class LotteryMLModels:
         self.log(f"训练{ball_type}球集成模型...")
         self.log(f"数据维度: 特征={X_train.shape}, 标签={y_train.shape}")
         
-        # 整合所有可用模型的预测结果
         ensemble_models = {}
         total_models = 5 if LIGHTGBM_AVAILABLE and CATBOOST_AVAILABLE else 3
         current_model = 0
         
         self.log(f"集成模型将训练以下子模型: 随机森林, XGBoost, GBDT{', LightGBM' if LIGHTGBM_AVAILABLE else ''}{', CatBoost' if CATBOOST_AVAILABLE else ''}")
         
-        # 训练随机森林模型
+    
         current_model += 1
         self.log(f"集成模型进度: 开始训练子模型 ({current_model}/{total_models}) - 随机森林")
         rf_model = self.train_random_forest(X_train, y_train, ball_type)
@@ -689,7 +654,6 @@ class LotteryMLModels:
             ensemble_models['random_forest'] = rf_model
             self.log(f"集成模型进度: 随机森林模型添加完成 ({current_model}/{total_models})")
             
-        # 训练XGBoost模型
         current_model += 1
         self.log(f"集成模型进度: 开始训练子模型 ({current_model}/{total_models}) - XGBoost")
         xgb_model = self.train_xgboost(X_train, y_train, ball_type)
@@ -697,7 +661,6 @@ class LotteryMLModels:
             ensemble_models['xgboost'] = xgb_model
             self.log(f"集成模型进度: XGBoost模型添加完成 ({current_model}/{total_models})")
             
-        # 训练GBDT模型
         current_model += 1
         self.log(f"集成模型进度: 开始训练子模型 ({current_model}/{total_models}) - GBDT")
         gbdt_model = self.train_gbdt(X_train, y_train, ball_type)
@@ -705,7 +668,6 @@ class LotteryMLModels:
             ensemble_models['gbdt'] = gbdt_model
             self.log(f"集成模型进度: GBDT模型添加完成 ({current_model}/{total_models})")
             
-        # 训练LightGBM模型（如果可用）
         if LIGHTGBM_AVAILABLE:
             current_model += 1
             self.log(f"集成模型进度: 开始训练子模型 ({current_model}/{total_models}) - LightGBM")
@@ -714,7 +676,6 @@ class LotteryMLModels:
                 ensemble_models['lightgbm'] = lgb_model
                 self.log(f"集成模型进度: LightGBM模型添加完成 ({current_model}/{total_models})")
                 
-        # 训练CatBoost模型（如果可用）
         if CATBOOST_AVAILABLE:
             current_model += 1
             self.log(f"集成模型进度: 开始训练子模型 ({current_model}/{total_models}) - CatBoost")
@@ -725,7 +686,6 @@ class LotteryMLModels:
         
         self.log(f"集成模型完成，包含 {len(ensemble_models)} 个子模型")
         
-        # 记录每个子模型的信息
         model_info = []
         for model_name in ensemble_models.keys():
             model_info.append(f"- {model_name}")
@@ -742,17 +702,21 @@ class LotteryMLModels:
         
         training_start_time = time.time()
         
-        # 准备数据
+        if self.model_type == 'expected_value' and EXPECTED_VALUE_MODEL_AVAILABLE:
+            self.log("\n====== 使用期望值模型 ======")
+            self.train_expected_value_model(df)
+            total_time = time.time() - training_start_time
+            self.log(f"\n训练完成，总耗时: {total_time:.2f}秒")
+            return self.models
+        
         self.log("\n====== 第1阶段: 数据准备 ======")
         data_prep_start = time.time()
         X_train, X_test, y_red_train, y_red_test, y_blue_train, y_blue_test = self.prepare_data(df)
         data_prep_time = time.time() - data_prep_start
         self.log(f"数据准备完成，耗时: {data_prep_time:.2f}秒")
         
-        # 初始化模型字典
         self.models = {}
         
-        # 根据选定的模型类型训练模型
         self.log("\n====== 第2阶段: 模型训练 ======")
         model_train_start = time.time()
         
@@ -767,7 +731,7 @@ class LotteryMLModels:
             self.models['blue'] = self.train_xgboost(X_train, y_blue_train, 'blue')
         
         elif self.model_type == 'gbdt':
-            self.log("\n----- 使用GBDT模型 -----")
+            self.log("\n----- 使用梯度提升决策树 -----")
             self.models['red'] = self.train_gbdt(X_train, y_red_train, 'red')
             self.models['blue'] = self.train_gbdt(X_train, y_blue_train, 'blue')
         
@@ -789,14 +753,13 @@ class LotteryMLModels:
         model_train_time = time.time() - model_train_start
         self.log(f"\n模型训练完成，耗时: {model_train_time:.2f}秒")
         
-        # 评估模型
         self.log("\n====== 第3阶段: 模型评估 ======")
-        eval_start = time.time()
-        red_acc, blue_acc = self.evaluate(X_test, y_red_test, y_blue_test)
-        eval_time = time.time() - eval_start
-        self.log(f"模型评估完成，耗时: {eval_time:.2f}秒")
+        if X_test is not None and y_red_test is not None and y_blue_test is not None:
+            eval_start = time.time()
+            self.evaluate(X_test, y_red_test, y_blue_test)
+            eval_time = time.time() - eval_start
+            self.log(f"模型评估完成，耗时: {eval_time:.2f}秒")
         
-        # 保存模型
         self.log("\n====== 第4阶段: 模型保存 ======")
         save_start = time.time()
         self.save_models()
@@ -804,65 +767,88 @@ class LotteryMLModels:
         self.log(f"模型保存完成，耗时: {save_time:.2f}秒")
         
         total_time = time.time() - training_start_time
-        self.log("\n============ 训练总结 ============")
-        self.log(f"总训练时间: {total_time:.2f}秒")
-        self.log(f"数据准备: {data_prep_time:.2f}秒 ({data_prep_time/total_time*100:.1f}%)")
-        self.log(f"模型训练: {model_train_time:.2f}秒 ({model_train_time/total_time*100:.1f}%)")
-        self.log(f"模型评估: {eval_time:.2f}秒 ({eval_time/total_time*100:.1f}%)")
-        self.log(f"模型保存: {save_time:.2f}秒 ({save_time/total_time*100:.1f}%)")
-        self.log(f"红球预测准确率: {red_acc:.4f}")
-        self.log(f"蓝球预测准确率: {blue_acc:.4f}")
-        self.log(f"整体预测准确率: {(red_acc + blue_acc) / 2:.4f}")
-        self.log("============ 训练结束 ============")
+        self.log(f"\n训练完成，总耗时: {total_time:.2f}秒")
         
         return self.models
+        
+    def train_expected_value_model(self, df):
+        """训练期望值模型"""
+        self.log(f"开始训练期望值模型...")
+        
+        self.models = {}
+        
+        red_probs_file = os.path.join(self.models_dir, 'ev_red_probabilities.pkl')
+        if os.path.exists(red_probs_file):
+            self.log("期望值模型文件已存在，尝试加载...")
+            
+            ev_model = ExpectedValueLotteryModel(
+                lottery_type=self.lottery_type,
+                log_callback=self.log,
+                use_gpu=self.use_gpu
+            )
+                
+            load_success = ev_model.load()
+            if load_success:
+                self.log("期望值模型加载成功")
+                self.models['red'] = ev_model
+                self.models['blue'] = ev_model
+                # 保存到原始模型中以便序列化
+                self.raw_models['expected_value_model'] = ev_model
+                return
+            else:
+                self.log("期望值模型加载失败，将重新训练...")
+        
+ 
+        ev_model = ExpectedValueLotteryModel(
+            lottery_type=self.lottery_type,
+            log_callback=self.log,
+            use_gpu=self.use_gpu
+        )
+        
+       
+        ev_model.train(df)
+        
+        self.models['red'] = ev_model
+        self.models['blue'] = ev_model
+        self.raw_models['expected_value_model'] = ev_model
+        
+        self.log("期望值模型训练完成")
     
     def evaluate(self, X_test, y_red_test, y_blue_test):
         """评估模型性能"""
         self.log("评估模型性能...")
         
-        # 处理1D测试标签
         if len(y_red_test.shape) == 1:
             y_red_test = y_red_test.reshape(-1, 1)
         if len(y_blue_test.shape) == 1:
             y_blue_test = y_blue_test.reshape(-1, 1)
             
-        # 对每个球进行预测和评估
         red_accuracy = 0
         blue_accuracy = 0
         
-        # 评估红球预测
+        
         if 'red' in self.models:
             y_pred_red = self.models['red'].predict(X_test)
             
-            # 检查预测结果的维度，适用于CatBoost模型等返回多维预测结果的情况
             if len(y_pred_red.shape) > 1 and y_pred_red.shape[1] > 1:
-                # 如果是多分类输出，取每行的最大值索引作为预测类别
                 self.log(f"处理多维预测结果，形状: {y_pred_red.shape}")
                 y_pred_red = np.argmax(y_pred_red, axis=1)
             
-            # 确保形状匹配
             y_red_test_flat = y_red_test.flatten()
             y_pred_red_flat = y_pred_red.flatten()
             
-            # 记录预测和实际值的形状以便调试
             self.log(f"红球预测形状: {y_pred_red_flat.shape}, 真实值形状: {y_red_test_flat.shape}")
             
-            # 计算准确率
             red_accuracy = np.mean(y_pred_red_flat == y_red_test_flat)
             self.log(f"红球预测准确率: {red_accuracy:.4f}")
         
-        # 评估蓝球预测
         if 'blue' in self.models:
             y_pred_blue = self.models['blue'].predict(X_test)
             
-            # 检查预测结果的维度，适用于CatBoost模型等返回多维预测结果的情况
             if len(y_pred_blue.shape) > 1 and y_pred_blue.shape[1] > 1:
-                # 如果是多分类输出，取每行的最大值索引作为预测类别
                 self.log(f"处理多维预测结果，形状: {y_pred_blue.shape}")
                 y_pred_blue = np.argmax(y_pred_blue, axis=1)
             
-            # 确保形状匹配
             y_blue_test_flat = y_blue_test.flatten()
             y_pred_blue_flat = y_pred_blue.flatten()
             
@@ -881,268 +867,79 @@ class LotteryMLModels:
     
     def save_models(self):
         """保存模型和缩放器"""
+        self.log("\n----- 保存模型和缩放器 -----")
+        
+        # 对于期望值模型，创建信息文件以确保目录存在
+        if self.model_type == 'expected_value' and EXPECTED_VALUE_MODEL_AVAILABLE:
+            # 期望值模型在train_expected_value_model中已经保存
+            self.log("期望值模型已在训练过程中自动保存")
+            
+            # 创建模型信息文件，确保目录存在
+            model_dir = os.path.join(self.models_dir, self.model_type)
+            os.makedirs(model_dir, exist_ok=True)
+            
+            model_info = {
+                'model_type': self.model_type,
+                'lottery_type': self.lottery_type,
+                'created_at': time.strftime('%Y-%m-%d %H:%M:%S')
+            }
+            info_path = os.path.join(model_dir, 'model_info.json')
+            with open(info_path, 'w') as f:
+                json.dump(model_info, f, indent=4)
+            
+            return True
+        
+        # 为其他模型创建保存目录
         model_dir = os.path.join(self.models_dir, self.model_type)
         os.makedirs(model_dir, exist_ok=True)
         
-        # 保存模型信息文件，记录模型类型和创建时间
+        # 保存模型和缩放器
+        for ball_type in ['red', 'blue']:
+            if ball_type not in self.models:
+                continue
+                
+            model = self.models[ball_type]
+            
+            # 对于不同类型的模型使用不同的保存方式
+            if self.model_type == 'ensemble':
+                # 为集成模型保存每个子模型
+                for model_name, sub_model in model.items():
+                    sub_model_path = os.path.join(model_dir, f'{ball_type}_{model_name}_model.pkl')
+                    with open(sub_model_path, 'wb') as f:
+                        pickle.dump(sub_model, f)
+                    self.log(f"保存{ball_type}球{model_name}模型: {sub_model_path}")
+            elif hasattr(model, 'predict'):
+                # 对于sklearn或类似模型使用pickle保存
+                model_path = os.path.join(model_dir, f'{ball_type}_model.pkl')
+                with open(model_path, 'wb') as f:
+                    pickle.dump(model, f)
+                self.log(f"保存{ball_type}球模型: {model_path}")
+            else:
+                self.log(f"警告: {ball_type}球模型不支持序列化")
+        
+        # 保存特征缩放器
+        for ball_type in ['red', 'blue']:
+            if ball_type in self.scalers:
+                scaler_path = os.path.join(model_dir, f'{ball_type}_scaler.pkl')
+                with open(scaler_path, 'wb') as f:
+                    pickle.dump(self.scalers[ball_type], f)
+                self.log(f"保存{ball_type}球特征缩放器: {scaler_path}")
+        
+        # 保存模型信息
         model_info = {
             'model_type': self.model_type,
             'lottery_type': self.lottery_type,
-            'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
             'feature_window': self.feature_window,
-            'red_count': self.red_count,
-            'blue_count': self.blue_count
+            'created_at': time.strftime('%Y-%m-%d %H:%M:%S')
         }
+        
         info_path = os.path.join(model_dir, 'model_info.json')
         with open(info_path, 'w') as f:
             json.dump(model_info, f, indent=4)
         
-        self.log(f"保存模型信息到 {info_path}")
+        self.log(f"保存模型信息: {info_path}")
+        return True
         
-        # 分别保存不同类型的原始模型
-        if self.model_type == 'lightgbm' and LIGHTGBM_AVAILABLE:
-            try:
-                import lightgbm as lgb
-                # 使用LightGBM的内置保存方法
-                if 'lightgbm_red' in self.raw_models:
-                    red_model_path = os.path.join(model_dir, 'red_model.txt')
-                    self.raw_models['lightgbm_red'].save_model(red_model_path)
-                if 'lightgbm_blue' in self.raw_models:
-                    blue_model_path = os.path.join(model_dir, 'blue_model.txt')
-                    self.raw_models['lightgbm_blue'].save_model(blue_model_path)
-                self.log(f"LightGBM模型已保存到 {model_dir}")
-            except Exception as e:
-                self.log(f"保存LightGBM模型出错: {str(e)}")
-        
-        elif self.model_type == 'xgboost':
-            try:
-                # 使用XGBoost的内置保存方法
-                if 'xgboost_red' in self.raw_models:
-                    red_model_path = os.path.join(model_dir, 'red_model.json')
-                    self.raw_models['xgboost_red'].save_model(red_model_path)
-                if 'xgboost_blue' in self.raw_models:
-                    blue_model_path = os.path.join(model_dir, 'blue_model.json')
-                    self.raw_models['xgboost_blue'].save_model(blue_model_path)
-                self.log(f"XGBoost模型已保存到 {model_dir}")
-            except Exception as e:
-                self.log(f"保存XGBoost模型出错: {str(e)}")
-        
-        elif self.model_type == 'catboost' and CATBOOST_AVAILABLE:
-            try:
-                # 使用CatBoost的内置保存方法
-                if 'catboost_red' in self.raw_models:
-                    red_model_path = os.path.join(model_dir, 'red_model.cbm')
-                    self.raw_models['catboost_red'].save_model(red_model_path)
-                if 'catboost_blue' in self.raw_models:
-                    blue_model_path = os.path.join(model_dir, 'blue_model.cbm')
-                    self.raw_models['catboost_blue'].save_model(blue_model_path)
-                self.log(f"CatBoost模型已保存到 {model_dir}")
-            except Exception as e:
-                self.log(f"保存CatBoost模型出错: {str(e)}")
-        
-        else:
-            # 对于其他模型类型，使用joblib保存
-            try:
-                model_path = os.path.join(model_dir, 'models.pkl')
-                joblib.dump(self.models, model_path)
-                self.log(f"模型已保存到 {model_path}")
-            except Exception as e:
-                self.log(f"保存模型出错: {str(e)}")
-        
-        # 保存缩放器
-        scaler_path = os.path.join(model_dir, 'scalers.pkl')
-        joblib.dump(self.scalers, scaler_path)
-        
-        # 保存特征列名
-        feature_path = os.path.join(model_dir, 'features.pkl')
-        joblib.dump(self.feature_cols, feature_path)
-        
-        self.log(f"模型相关数据已保存到 {model_dir}")
-    
-    def load_models(self):
-        """加载模型和缩放器"""
-        model_dir = os.path.join(self.models_dir, self.model_type)
-        
-        if not os.path.exists(model_dir):
-            self.log(f"模型目录不存在: {model_dir}")
-            return False
-        
-        try:
-            # 加载模型信息
-            info_path = os.path.join(model_dir, 'model_info.json')
-            if os.path.exists(info_path):
-                with open(info_path, 'r') as f:
-                    model_info = json.load(f)
-                    self.log(f"加载模型信息: {model_info}")
-            
-            # 根据模型类型加载不同的模型
-            if self.model_type == 'lightgbm' and LIGHTGBM_AVAILABLE:
-                import lightgbm as lgb
-                self.models = {}
-                self.raw_models = {}
-                
-                # 加载红球模型
-                red_model_path = os.path.join(model_dir, 'red_model.txt')
-                if os.path.exists(red_model_path):
-                    lgb_model = lgb.Booster(model_file=red_model_path)
-                    self.raw_models['lightgbm_red'] = lgb_model
-                    
-                    # 创建包装模型
-                    class WrappedLightGBMModel:
-                        def __init__(self, model, processor):
-                            self.model = model
-                            self.process_prediction = processor
-                            
-                        def predict(self, data):
-                            raw_preds = self.model.predict(data)
-                            return self.process_prediction(raw_preds)
-                    
-                    self.models['red'] = WrappedLightGBMModel(lgb_model, self.process_multidim_prediction)
-                
-                # 加载蓝球模型
-                blue_model_path = os.path.join(model_dir, 'blue_model.txt')
-                if os.path.exists(blue_model_path):
-                    lgb_model = lgb.Booster(model_file=blue_model_path)
-                    self.raw_models['lightgbm_blue'] = lgb_model
-                    self.models['blue'] = WrappedLightGBMModel(lgb_model, self.process_multidim_prediction)
-                
-                self.log(f"LightGBM模型已从 {model_dir} 加载")
-            
-            elif self.model_type == 'xgboost':
-                import xgboost as xgb
-                self.models = {}
-                self.raw_models = {}
-                
-                # 加载红球模型
-                red_model_path = os.path.join(model_dir, 'red_model.json')
-                if os.path.exists(red_model_path):
-                    xgb_model = xgb.Booster()
-                    xgb_model.load_model(red_model_path)
-                    self.raw_models['xgboost_red'] = xgb_model
-                    
-                    # 创建包装模型
-                    class WrappedXGBoostModel:
-                        def __init__(self, model, processor):
-                            self.model = model
-                            self.process_prediction = processor
-                            
-                        def predict(self, data):
-                            if not isinstance(data, xgb.DMatrix):
-                                data = xgb.DMatrix(data)
-                            raw_preds = self.model.predict(data)
-                            return self.process_prediction(raw_preds)
-                    
-                    self.models['red'] = WrappedXGBoostModel(xgb_model, self.process_multidim_prediction)
-                
-                # 加载蓝球模型
-                blue_model_path = os.path.join(model_dir, 'blue_model.json')
-                if os.path.exists(blue_model_path):
-                    xgb_model = xgb.Booster()
-                    xgb_model.load_model(blue_model_path)
-                    self.raw_models['xgboost_blue'] = xgb_model
-                    self.models['blue'] = WrappedXGBoostModel(xgb_model, self.process_multidim_prediction)
-                
-                self.log(f"XGBoost模型已从 {model_dir} 加载")
-            
-            elif self.model_type == 'catboost' and CATBOOST_AVAILABLE:
-                import catboost as cb
-                self.models = {}
-                self.raw_models = {}
-                
-                # 加载红球模型
-                red_model_path = os.path.join(model_dir, 'red_model.cbm')
-                if os.path.exists(red_model_path):
-                    cb_model = cb.CatBoost()
-                    cb_model.load_model(red_model_path)
-                    self.raw_models['catboost_red'] = cb_model
-                    
-                    # 创建包装模型
-                    class WrappedCatBoostModel:
-                        def __init__(self, model, processor):
-                            self.model = model
-                            self.process_prediction = processor
-                            
-                        def predict(self, data):
-                            raw_preds = self.model.predict(data)
-                            return self.process_prediction(raw_preds)
-                    
-                    self.models['red'] = WrappedCatBoostModel(cb_model, self.process_multidim_prediction)
-                
-                # 加载蓝球模型
-                blue_model_path = os.path.join(model_dir, 'blue_model.cbm')
-                if os.path.exists(blue_model_path):
-                    cb_model = cb.CatBoost()
-                    cb_model.load_model(blue_model_path)
-                    self.raw_models['catboost_blue'] = cb_model
-                    self.models['blue'] = WrappedCatBoostModel(cb_model, self.process_multidim_prediction)
-                
-                self.log(f"CatBoost模型已从 {model_dir} 加载")
-            
-            else:
-                # 加载其他类型的模型
-                model_path = os.path.join(model_dir, 'models.pkl')
-                self.models = joblib.load(model_path)
-                
-                # 加载缩放器
-                scaler_path = os.path.join(model_dir, 'scalers.pkl')
-                if os.path.exists(scaler_path):
-                    self.scalers = joblib.load(scaler_path)
-                
-                # 加载特征列名
-                feature_path = os.path.join(model_dir, 'features.pkl')
-                if os.path.exists(feature_path):
-                    self.feature_cols = joblib.load(feature_path)
-                
-                self.log(f"模型已从 {model_dir} 加载")
-                return True
-        except Exception as e:
-            self.log(f"加载模型时出错: {str(e)}")
-            import traceback
-            self.log(traceback.format_exc())
-            return False
-    
-    def prepare_prediction_data(self, recent_data):
-        """
-        准备预测数据
-        
-        Args:
-            recent_data: 包含最近开奖数据的DataFrame
-            
-        Returns:
-            预处理后的特征数据
-        """
-        # 定义红蓝球列名
-        if self.lottery_type == 'dlt':
-            red_cols = [col for col in recent_data.columns if col.startswith('红球_')][:5]
-            blue_cols = [col for col in recent_data.columns if col.startswith('蓝球_')][:2]
-        else:  # ssq
-            red_cols = [col for col in recent_data.columns if col.startswith('红球_')][:6]
-            blue_cols = [col for col in recent_data.columns if col.startswith('蓝球')][:1]
-        
-        # 按期数降序排列
-        recent_data = recent_data.sort_values('期数', ascending=False).reset_index(drop=True)
-        
-        # 确保有足够的历史数据
-        if len(recent_data) < self.feature_window:
-            self.log(f"历史数据不足，需要至少 {self.feature_window} 期")
-            return None
-        
-        # 创建特征
-        features = []
-        for i in range(self.feature_window):
-            features.extend(recent_data.iloc[i][red_cols].values)
-            features.extend(recent_data.iloc[i][blue_cols].values)
-            
-        X = np.array([features])
-        
-        # 使用缩放器进行标准化
-        if 'X' in self.scalers:
-            X_scaled = self.scalers['X'].transform(X)
-            return X_scaled
-        else:
-            self.log("缩放器未找到，无法预处理数据")
-            return None
-    
     def predict(self, recent_data):
         """
         生成预测结果
@@ -1153,6 +950,59 @@ class LotteryMLModels:
         Returns:
             预测的红球和蓝球号码
         """
+        # 检查是否使用期望值模型
+        if self.model_type == 'expected_value' and EXPECTED_VALUE_MODEL_AVAILABLE:
+            # 检查模型是否已经加载
+            if ('red' not in self.models or not isinstance(self.models['red'], ExpectedValueLotteryModel) or
+                'blue' not in self.models or not isinstance(self.models['blue'], ExpectedValueLotteryModel)):
+                # 尝试重新加载期望值模型
+                self.log("期望值模型未加载或类型不正确，正在尝试重新加载...")
+                ev_model = ExpectedValueLotteryModel(
+                    lottery_type=self.lottery_type,
+                    log_callback=self.log,
+                    use_gpu=self.use_gpu
+                )
+                
+                load_success = ev_model.load()
+                if load_success:
+                    self.models['red'] = ev_model
+                    self.models['blue'] = ev_model
+                    self.raw_models['expected_value_model'] = ev_model
+                    self.log("期望值模型重新加载成功")
+                else:
+                    self.log("错误：期望值模型加载失败，请先训练模型")
+                    return None, None
+            
+            # 使用期望值模型进行预测
+            self.log("使用期望值模型进行预测...")
+            red_preds, blue_preds = self.models['red'].predict(recent_data, num_predictions=1)
+            # 期望值模型返回的是索引列表的列表，需要处理成号码
+            if red_preds and blue_preds:
+                red_numbers = [idx + 1 for idx in red_preds[0]]  # 索引转换为号码
+                blue_numbers = [idx + 1 for idx in blue_preds[0]]
+                
+                # 确保红球和蓝球号码数量符合要求
+                red_numbers = sorted(list(set(red_numbers)))[:self.red_count]
+                blue_numbers = sorted(list(set(blue_numbers)))[:self.blue_count]
+                
+                # 如果数量不足，补充随机号码
+                while len(red_numbers) < self.red_count:
+                    new_num = np.random.randint(1, self.red_range + 1)
+                    if new_num not in red_numbers:
+                        red_numbers.append(new_num)
+                red_numbers.sort()
+                        
+                while len(blue_numbers) < self.blue_count:
+                    new_num = np.random.randint(1, self.blue_range + 1)
+                    if new_num not in blue_numbers:
+                        blue_numbers.append(new_num)
+                blue_numbers.sort()
+                
+                return red_numbers, blue_numbers
+            self.log("期望值模型预测失败")
+            return None, None
+        
+        # 对于其他模型的处理保持不变
         # 提取红蓝球列名
         if self.lottery_type == 'dlt':
             red_cols = [col for col in recent_data.columns if col.startswith('红球_')][:5]

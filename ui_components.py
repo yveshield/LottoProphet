@@ -273,57 +273,162 @@ def create_advanced_statistics_tab(advanced_stats_tab):
     Returns:
         tuple: 高级统计分析标签页中的关键UI组件
     """
-    advanced_stats_layout = QVBoxLayout(advanced_stats_tab)
+    # 创建整体布局
+    advanced_layout = QVBoxLayout(advanced_stats_tab)
+    advanced_layout.setSpacing(10)
+    advanced_layout.setContentsMargins(8, 8, 8, 8)
     
-  
-    settings_group = QGroupBox("设置")
-    settings_layout = QHBoxLayout()
+    # 创建控制区域布局
+    control_layout = QHBoxLayout()
     
-
-    lottery_type_label = QLabel("彩票类型:")
-    advanced_stats_lottery_combo = QComboBox()
-    advanced_stats_lottery_combo.addItems(["双色球", "大乐透"])
-    settings_layout.addWidget(lottery_type_label)
-    settings_layout.addWidget(advanced_stats_lottery_combo)
+    # 彩票类型选择
+    lottery_label = QLabel("彩票类型:")
+    lottery_combo = QComboBox()
+    lottery_combo.addItems(["双色球", "大乐透"])
     
-
-    run_advanced_stats_button = QPushButton("运行高级统计分析")
-    settings_layout.addWidget(run_advanced_stats_button)
+    # 添加按钮
+    run_stats_button = QPushButton("运行高级统计分析")
+    run_distribution_button = QPushButton("运行分布分析")
+    show_data_button = QPushButton("显示详细统计数据")
     
-    run_distribution_analysis_button = QPushButton("运行分布分析")
-    settings_layout.addWidget(run_distribution_analysis_button)
+    control_layout.addWidget(lottery_label)
+    control_layout.addWidget(lottery_combo)
+    control_layout.addWidget(run_stats_button)
+    control_layout.addWidget(run_distribution_button)
+    control_layout.addWidget(show_data_button)
     
-    show_stats_data_button = QPushButton("显示统计数据")
-    settings_layout.addWidget(show_stats_data_button)
+    advanced_layout.addLayout(control_layout)
     
-   
-    settings_group.setLayout(settings_layout)
-    advanced_stats_layout.addWidget(settings_group)
+    # 创建结果显示区域
+    result_label = QLabel("点击'运行分析'按钮查看统计分析结果")
+    result_label.setAlignment(Qt.AlignCenter)
+    result_label.setMinimumHeight(500)
+    result_label.setStyleSheet("background-color: white; border: 1px solid #DDDDDD;")
     
- 
-    results_group = QGroupBox("分析结果")
-    results_layout = QVBoxLayout()
-    
-  
+    # 使用QScrollArea包裹结果显示区域，以支持滚动
     scroll_area = QScrollArea()
     scroll_area.setWidgetResizable(True)
-    scroll_content = QWidget()
-    scroll_layout = QVBoxLayout(scroll_content)
+    scroll_area.setWidget(result_label)
     
-
-    stats_result_label = QLabel("请选择彩票类型并运行分析...")
-    stats_result_label.setAlignment(Qt.AlignCenter)
-    scroll_layout.addWidget(stats_result_label)
-
-    scroll_area.setWidget(scroll_content)
-    results_layout.addWidget(scroll_area)
-
-    results_group.setLayout(results_layout)
-    advanced_stats_layout.addWidget(results_group)
+    advanced_layout.addWidget(scroll_area, 1)
     
-    return (advanced_stats_lottery_combo, run_advanced_stats_button,
-            run_distribution_analysis_button, show_stats_data_button,
-            stats_result_label)
+    return (lottery_combo, run_stats_button, run_distribution_button, show_data_button, result_label)
+
+
+def create_expected_value_tab(expected_value_tab):
+    """
+    创建期望值模型专用标签页的UI组件
+    
+    Args:
+        expected_value_tab: QWidget，期望值模型标签页容器
+        
+    Returns:
+        tuple: 期望值模型标签页中的关键UI组件
+    """
+    # 创建整体布局
+    ev_layout = QVBoxLayout(expected_value_tab)
+    ev_layout.setSpacing(10)
+    ev_layout.setContentsMargins(8, 8, 8, 8)
+    
+    # 创建标题
+    title_label = QLabel("期望值模型预测")
+    title_label.setAlignment(Qt.AlignCenter)
+    title_label.setStyleSheet("font-size: 16pt; font-weight: bold; margin-bottom: 10px;")
+    ev_layout.addWidget(title_label)
+    
+    # 创建设置区域
+    settings_group = QGroupBox("模型设置")
+    settings_layout = QFormLayout(settings_group)
+    
+    # 彩票类型选择
+    lottery_combo = QComboBox()
+    lottery_combo.addItems([name_path[key]['name'] for key in name_path.keys()])
+    settings_layout.addRow("彩票类型:", lottery_combo)
+    
+    # 预测数量
+    prediction_spin = QSpinBox()
+    prediction_spin.setRange(1, 10)
+    prediction_spin.setValue(5)
+    settings_layout.addRow("预测数量:", prediction_spin)
+    
+    # 训练设置
+    train_group = QGroupBox("训练设置")
+    train_layout = QVBoxLayout(train_group)
+    
+    gpu_checkbox = QCheckBox("使用GPU训练")
+    cuda_available = torch.cuda.is_available()
+    gpu_checkbox.setChecked(cuda_available)
+    gpu_checkbox.setEnabled(cuda_available)
+    train_layout.addWidget(gpu_checkbox)
+    
+    # 添加控制按钮
+    button_layout = QHBoxLayout()
+    
+    train_button = QPushButton("训练期望值模型")
+    train_button.setMinimumHeight(30)
+    
+    predict_button = QPushButton("生成期望值预测")
+    predict_button.setMinimumHeight(30)
+    
+    update_data_button = QPushButton("更新历史数据")
+    update_data_button.setMinimumHeight(30)
+    
+    button_layout.addWidget(train_button)
+    button_layout.addWidget(predict_button)
+    button_layout.addWidget(update_data_button)
+    
+    # 组织布局
+    control_layout = QHBoxLayout()
+    control_layout.addWidget(settings_group, 1)
+    control_layout.addWidget(train_group, 1)
+    
+    ev_layout.addLayout(control_layout)
+    ev_layout.addLayout(button_layout)
+    
+    # 创建结果显示区域
+    results_group = QGroupBox("预测结果")
+    results_layout = QVBoxLayout(results_group)
+    
+    result_label = QLabel("期望值模型预测结果将显示在这里")
+    result_label.setAlignment(Qt.AlignCenter)
+    result_label.setWordWrap(True)
+    result_label.setStyleSheet("padding: 10px; background-color: white; border: 1px solid #DDDDDD;")
+    result_label.setMinimumHeight(150)
+    
+    results_layout.addWidget(result_label)
+    
+    # 创建日志显示区域
+    log_group = QGroupBox("期望值模型训练日志")
+    log_layout = QVBoxLayout(log_group)
+    
+    log_text = QTextEdit()
+    log_text.setReadOnly(True)
+    log_text.setStyleSheet("font-family: Consolas, monospace; font-size: 10pt;")
+    log_text.setContextMenuPolicy(Qt.CustomContextMenu)
+    
+    log_layout.addWidget(log_text)
+    
+    # 结果和日志区域布局
+    content_layout = QHBoxLayout()
+    content_layout.addWidget(results_group, 1)
+    content_layout.addWidget(log_group, 2)
+    
+    ev_layout.addLayout(content_layout, 1)
+    
+    # 添加说明文本
+    info_label = QLabel(
+        "期望值模型基于历史数据统计和博弈论中的期望值概念计算最优号码组合。"
+        "此模型分析历史开奖模式、号码频率和组合特征，为每个可能的号码分配期望值，"
+        "并基于这些期望值生成预测结果。"
+    )
+    info_label.setWordWrap(True)
+    info_label.setStyleSheet("font-style: italic; color: #666666; margin-top: 5px;")
+    
+    ev_layout.addWidget(info_label)
+    
+    return (predict_button, train_button, update_data_button,
+            lottery_combo, prediction_spin, gpu_checkbox, 
+            result_label, log_text)
 
 
 def create_main_window():
