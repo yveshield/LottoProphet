@@ -520,8 +520,7 @@ class LotteryMLModels:
             num_boost_round=100,
             valid_sets=valid_sets,
             valid_names=valid_names,
-            callbacks=callbacks,
-            verbose_eval=False  # 禁用内置的输出，使用我们的回调
+            callbacks=callbacks
         )
         
         if hasattr(model, 'feature_importance'):
@@ -554,76 +553,76 @@ class LotteryMLModels:
         self.log(f"训练{ball_type}球CatBoost模型...")
         self.log(f"数据维度: 特征={X_train.shape}, 标签={y_train.shape}")
         
+        # 设置输出目录
+        train_dir = f"catboost_info_{ball_type}"
+        os.makedirs(train_dir, exist_ok=True)
+        
+        # 确定分类数
+        if ball_type == 'red':
+            classes_count = self.red_range
+        else:  # blue
+            classes_count = self.blue_range
+        
+        # 设置参数
         params = {
             'loss_function': 'MultiClass',
-            'classes_count': self.red_range + 1 if ball_type == 'red' else self.blue_range + 1,
+            'classes_count': classes_count,
             'iterations': 100,
             'learning_rate': 0.1,
             'depth': 6,
             'random_seed': 42,
-            'verbose': False,  # 减少自带的输出，使用我们自己的回调
-            'train_dir': f'catboost_info_{ball_type}',  # 保存训练日志的目录
+            'verbose': False,
+            'train_dir': train_dir
         }
+        
+        # 如果GPU可用，启用GPU加速
+        if self.use_gpu and hasattr(cb, 'CatBoostClassifier') and hasattr(cb.CatBoostClassifier, 'is_cuda_supported') and cb.CatBoostClassifier.is_cuda_supported():
+            params['task_type'] = 'GPU'
+            self.log("CatBoost使用GPU加速训练")
         
         self.log(f"CatBoost参数: {params}")
         
-        if self.use_gpu and torch.cuda.is_available():
-            params['task_type'] = 'GPU'  # 使用GPU加速
-            self.log("CatBoost使用GPU加速训练")
-        
-        class LoggerCallback(cb.callback.Callback):
-            def __init__(self, log_func):
-                self.log_func = log_func
-                self.last_info = {}
+        # 创建自定义回调，用于日志和暂停支持
+        # 使用正确的回调方式
+        class LoggerCallback(object):
+            def __init__(self, logger, progress_interval=10):
+                self.logger = logger
+                self.progress_interval = progress_interval
+                self.iteration = 0
                 
             def after_iteration(self, info):
-                iter_num = info.iteration
-                if iter_num % 10 == 0 or iter_num == info.metric_info['iterations'] - 1:
-                    try:
-                        train_metrics = info.metrics.get('learn', {})
-                        log_messages = []
-                        
-                        progress_msg = f"CatBoost迭代 {iter_num+1}/{info.metric_info['iterations']}"
-                        log_messages.append(progress_msg)
-                        
-                        for metric_name, metric_values in train_metrics.items():
-                            if len(metric_values) > 0:
-                                value = metric_values[-1]
-                                metric_msg = f"{metric_name}={value:.6f}"
-                                log_messages.append(metric_msg)
-                        
-                        if log_messages:
-                            self.log_func(f"{': '.join(log_messages)}")
-                        else:
-                            self.log_func(progress_msg)
-                        
-                    except Exception as e:
-                        self.log_func(f"记录CatBoost进度时出错: {str(e)}")
-                        self.log_func(f"CatBoost迭代 {iter_num+1}/{info.metric_info['iterations']}")
-                        
-                return True
+                self.iteration += 1
+                if self.iteration % self.progress_interval == 0:
+                    self.logger(f"CatBoost训练进度: {self.iteration}/{info.params.iterations} 迭代已完成 ({self.iteration/info.params.iterations*100:.1f}%)")
+                return False  # 返回False表示继续训练
         
-        callbacks = [LoggerCallback(self.log)]
+        # 创建模型
+        model = cb.CatBoostClassifier(**params)
         
+        # 训练模型
         self.log(f"开始训练CatBoost模型...")
+        
         try:
-            train_dataset = cb.Pool(X_train, y_train)
-            model = cb.CatBoost(params)
-            model.fit(train_dataset, callbacks=callbacks)
+            # 检查是否支持回调
+            if hasattr(cb, 'CallbackCustom') or hasattr(model, 'set_user_callback'):
+                # 新版CatBoost
+                callbacks = [LoggerCallback(self.log)]
+                model.fit(X_train, y_train, callbacks=callbacks)
+            else:
+                # 不使用回调，直接训练
+                model.fit(X_train, y_train)
+                self.log(f"CatBoost训练完成，共{params['iterations']}迭代")
             
-            try:
-                feature_importances = model.get_feature_importance()
+            # 特征重要性
+            if hasattr(model, 'get_feature_importance'):
+                importances = model.get_feature_importance()
                 feature_names = [f"特征_{i}" for i in range(X_train.shape[1])]
-                if len(self.feature_cols) == X_train.shape[1]:
-                    feature_names = self.feature_cols
-                    
-                importance_data = sorted(zip(feature_names, feature_importances), key=lambda x: x[1], reverse=True)
+                
+                importance_data = sorted(zip(feature_names, importances), key=lambda x: x[1], reverse=True)
                 
                 self.log(f"CatBoost特征重要性 (前10个):")
                 for i, (feature, importance) in enumerate(importance_data[:10]):
                     self.log(f"  {i+1}. {feature}: {importance:.4f}")
-            except Exception as e:
-                self.log(f"获取CatBoost特征重要性时出错: {str(e)}")
             
             self.raw_models[f'catboost_{ball_type}'] = model
             
@@ -1083,6 +1082,8 @@ class LotteryMLModels:
         
         # 加载红球和蓝球模型
         models_loaded = True
+        balls_loaded = 0  # 记录加载成功的球数量
+        
         for ball_type in ['red', 'blue']:
             try:
                 if self.model_type == 'ensemble':
@@ -1106,22 +1107,78 @@ class LotteryMLModels:
                             ensemble_loaded = True
                         else:
                             self.log(f"警告: {ball_type}球{model_name}模型文件不存在")
-                    if not ensemble_loaded:
+                    if ensemble_loaded:
+                        balls_loaded += 1
+                    else:
                         models_loaded = False
                 else:
                     # 对于其他模型，直接加载
                     model_path = os.path.join(model_dir, f'{ball_type}_model.pkl')
                     if os.path.exists(model_path):
-                        with open(model_path, 'rb') as f:
-                            self.models[ball_type] = pickle.load(f)
-                        self.log(f"加载{ball_type}球模型成功")
-                        
-                        # 尝试从模型中获取特征数量
-                        if not hasattr(self, 'expected_feature_count'):
-                            model_obj = self.models[ball_type]
-                            if hasattr(model_obj, 'n_features_in_'):
-                                self.expected_feature_count = model_obj.n_features_in_
-                                self.log(f"从模型中获取特征数量: {self.expected_feature_count}")
+                        try:
+                            with open(model_path, 'rb') as f:
+                                model_obj = pickle.load(f)
+                                
+                            # 特别处理 LightGBM 和其他可能返回原始对象而不是包装后对象的模型
+                            if self.model_type == 'lightgbm' and hasattr(model_obj, 'predict'):
+                                # 对于 LightGBM 和其他带有 predict 方法的库，创建一个包装器
+                                if 'lightgbm' in str(type(model_obj)).lower():
+                                    self.log(f"检测到原始 LightGBM 模型，创建包装器")
+                                    self.models[ball_type] = WrappedLightGBMModel(model_obj, self.process_multidim_prediction)
+                                else:
+                                    self.models[ball_type] = model_obj
+                            else:
+                                self.models[ball_type] = model_obj
+                                
+                            self.log(f"加载{ball_type}球模型成功")
+                            balls_loaded += 1
+                            
+                            # 尝试从模型中获取特征数量
+                            if not hasattr(self, 'expected_feature_count'):
+                                model_obj_inner = self.models[ball_type]
+                                # 如果是包装类，获取内部模型
+                                if hasattr(model_obj_inner, 'model'):
+                                    model_obj_inner = model_obj_inner.model
+                                
+                                if hasattr(model_obj_inner, 'n_features_in_'):
+                                    self.expected_feature_count = model_obj_inner.n_features_in_
+                                    self.log(f"从模型中获取特征数量: {self.expected_feature_count}")
+                        except Exception as e:
+                            self.log(f"加载{ball_type}球模型失败: {e}, 尝试创建包装器")
+                            # 尝试创建适当的包装器
+                            try:
+                                with open(model_path, 'rb') as f:
+                                    raw_model = pickle.load(f)
+                                
+                                if self.model_type == 'lightgbm':
+                                    self.models[ball_type] = WrappedLightGBMModel(raw_model, self.process_multidim_prediction)
+                                elif self.model_type == 'catboost':
+                                    self.models[ball_type] = WrappedCatBoostModel(raw_model, self.process_multidim_prediction)
+                                elif self.model_type == 'xgboost':
+                                    self.models[ball_type] = WrappedXGBoostModel(raw_model, self.process_multidim_prediction)
+                                elif self.model_type == 'gbdt':
+                                    self.models[ball_type] = WrappedGBDTModel(raw_model, self.process_multidim_prediction)
+                                else:
+                                    # 创建一个通用包装器
+                                    class GenericWrapper:
+                                        def __init__(self, model, processor):
+                                            self.model = model
+                                            self.process_prediction = processor
+                                        
+                                        def predict(self, data):
+                                            if hasattr(self.model, 'predict_proba'):
+                                                raw_preds = self.model.predict_proba(data)
+                                            else:
+                                                raw_preds = self.model.predict(data)
+                                            return self.process_prediction(raw_preds)
+                                    
+                                    self.models[ball_type] = GenericWrapper(raw_model, self.process_multidim_prediction)
+                                
+                                self.log(f"成功为{ball_type}球创建了{self.model_type}包装器")
+                                balls_loaded += 1
+                            except Exception as e2:
+                                self.log(f"创建包装器也失败: {e2}")
+                                models_loaded = False
                     else:
                         self.log(f"警告: {ball_type}球模型文件不存在: {model_path}")
                         models_loaded = False
@@ -1152,12 +1209,16 @@ class LotteryMLModels:
         if models_loaded:
             self.log(f"{MODEL_TYPES[self.model_type]}模型加载成功")
             return True
-        elif 'red' in self.models and 'blue' in self.models:
+        elif balls_loaded >= 2:  # 至少加载了红球和蓝球
             # 即使有警告，只要基础模型存在，我们也认为模型可用
             self.log(f"{MODEL_TYPES[self.model_type]}模型加载成功，但有一些警告")
             return True
+        elif 'red' in self.models and 'blue' in self.models:
+            # 模型存在但可能有其他问题
+            self.log(f"{MODEL_TYPES[self.model_type]}模型加载成功，但可能存在兼容性问题")
+            return True
         else:
-            self.log(f"{MODEL_TYPES[self.model_type]}模型加载失败")
+            self.log(f"{MODEL_TYPES[self.model_type]}模型加载失败，未找到必要的红球和蓝球模型")
             return False
         
     def predict(self, recent_data):

@@ -922,7 +922,7 @@ class LotteryPredictorApp(QMainWindow):
                 if lottery_type == "dlt":
                     ball_info = f"期数: {row['期数']} 红球: {row['红球_1']} {row['红球_2']} {row['红球_3']} {row['红球_4']} {row['红球_5']} 蓝球: {row['蓝球_1']} {row['蓝球_2']}"
                 else:
-                    ball_info = f"期数: {row['期数']} 红球: {row['红球_1']} {row['红球_2']} {row['红球_3']} {row['红球_4']} {row['红球_5']} {row['红球_6']} 蓝球: {row['蓝球_1']}"
+                    ball_info = f"期数: {row['期数']} 红球: {row['红球_1']} {row['红球_2']} {row['红球_3']} {row['红球_4']} {row['红球_5']} {row['红球_6']} 蓝球: {row['蓝球']}"
                 self.ev_log_box.append(ball_info)
             
             # 显示概率分布
