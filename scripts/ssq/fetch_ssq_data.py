@@ -6,6 +6,9 @@ import urllib3
 import sys
 import logging
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from lotto import convert_csv_to_formatted_excel
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ---------------- 配置 ----------------
@@ -240,3 +243,4 @@ def fetch_ssq_data():
 
 if __name__ == "__main__":
     fetch_ssq_data()
+    convert_csv_to_formatted_excel()

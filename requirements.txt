@@ -1,7 +1,7 @@
 torch
 torchvision
 torchaudio
-torchcrf
+pytorch-crf
 PyQt5
 scikit-learn
 pandas
@@ -16,3 +16,4 @@ scikit-learn
 joblib
 catboost
 lightgbm
+lxml

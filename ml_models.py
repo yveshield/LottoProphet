@@ -314,7 +314,17 @@ class LotteryMLModels:
     def process_multidim_prediction(raw_preds):
         """处理多维预测结果，返回类别索引"""
         if len(raw_preds.shape) > 1 and raw_preds.shape[1] > 1:
-            return np.argmax(raw_preds, axis=1)
+            # 获取前3个最可能的类别，然后随机选择一个，添加随机性
+            # 这样可以避免始终返回相同的预测结果
+            top_n = min(3, raw_preds.shape[1])
+            if np.random.random() < 0.7:  # 70%的概率使用最高概率类别
+                return np.argmax(raw_preds, axis=1)
+            else:  # 30%的概率从前N个最可能的类别中随机选择
+                top_indices = np.argsort(-raw_preds, axis=1)[:, :top_n]
+                selected_indices = np.zeros(raw_preds.shape[0], dtype=int)
+                for i in range(raw_preds.shape[0]):
+                    selected_indices[i] = np.random.choice(top_indices[i])
+                return selected_indices
         return raw_preds
     
     def train_xgboost(self, X_train, y_train, ball_type):
@@ -1504,14 +1514,38 @@ class LotteryMLModels:
                         if preds not in blue_votes:
                             blue_votes[preds] = 0
                         blue_votes[preds] += 1
-                blue_predictions = sorted(blue_votes.items(), key=lambda x: x[1], reverse=True)[:self.blue_count]
-                blue_predictions = [p[0] + 1 for p in blue_predictions]  # +1 转回原始号码范围
+                
+                # 从得票前3的蓝球中随机选择，而不是总是选择得票最高的
+                top_blue_votes = sorted(blue_votes.items(), key=lambda x: x[1], reverse=True)
+                top_count = min(3, len(top_blue_votes))
+                
+                # 有60%概率使用票数最高的蓝球，40%概率从票数前3的蓝球中随机选择
+                if np.random.random() < 0.6 or top_count == 1:
+                    blue_predictions = [p[0] + 1 for p in top_blue_votes[:self.blue_count]]  # +1 转回原始号码范围
+                else:
+                    # 随机选择前top_count个中的blue_count个
+                    selected_indices = np.random.choice(top_count, size=min(self.blue_count, top_count), replace=False)
+                    blue_predictions = [top_blue_votes[i][0] + 1 for i in selected_indices]  # +1 转回原始号码范围
             else:
                 # 单一模型预测
                 if hasattr(blue_pred, "__iter__"):
-                    blue_predictions = [int(p) + 1 for p in blue_pred]  # +1 转回原始号码范围
+                    # 随机设定阈值，增加随机性
+                    if np.random.random() < 0.3 and len(blue_pred) > 1:
+                        # 30%的概率，从前3个最高概率蓝球中随机选择
+                        top_indices = np.argsort(blue_pred)[-3:] if len(blue_pred) >= 3 else np.argsort(blue_pred)
+                        selected_idx = np.random.choice(top_indices)
+                        blue_predictions = [int(selected_idx) + 1]  # +1 转回原始号码范围
+                    else:
+                        # 70%的概率，使用原始预测
+                        blue_predictions = [int(p) + 1 for p in blue_pred]  # +1 转回原始号码范围
                 else:
-                    blue_predictions = [int(blue_pred) + 1]  # +1 转回原始号码范围
+                    # 直接使用并添加随机性
+                    if np.random.random() < 0.25:  # 25%概率使用随机蓝球而不是模型预测
+                        # 根据彩票类型确定蓝球范围
+                        blue_range = self.blue_range
+                        blue_predictions = [np.random.randint(1, blue_range + 1)]
+                    else:
+                        blue_predictions = [int(blue_pred) + 1]  # +1 转回原始号码范围
         except Exception as e:
             self.log(f"预测过程中出错: {e}")
             import traceback
@@ -1536,6 +1570,21 @@ class LotteryMLModels:
         # 确保号码不重复且按升序排列
         red_predictions = sorted(list(set(red_predictions)))[:self.red_count]
         blue_predictions = sorted(list(set(blue_predictions)))[:self.blue_count]
+        
+        # 增加随机性：有5%的概率完全随机生成一个蓝球号码
+        if np.random.random() < 0.05:
+            self.log("随机生成蓝球号码以增加多样性")
+            blue_predictions = []
+            for _ in range(self.blue_count):
+                blue_predictions.append(np.random.randint(1, self.blue_range + 1))
+            blue_predictions = sorted(list(set(blue_predictions)))
+            
+            # 如果随机生成后数量不足，继续随机补充
+            while len(blue_predictions) < self.blue_count:
+                new_num = np.random.randint(1, self.blue_range + 1)
+                if new_num not in blue_predictions:
+                    blue_predictions.append(new_num)
+            blue_predictions = sorted(blue_predictions)[:self.blue_count]
         
         return red_predictions, blue_predictions
 

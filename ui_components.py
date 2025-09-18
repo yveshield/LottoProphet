@@ -118,7 +118,7 @@ def create_main_tab(main_tab):
     gpu_group = QGroupBox("GPU设置")
     gpu_layout = QVBoxLayout(gpu_group)
     gpu_layout.setSpacing(6)
-    
+
     gpu_layout.addWidget(gpu_checkbox)
     
     control_layout.addWidget(settings_group, 2)
@@ -159,9 +159,9 @@ def create_main_tab(main_tab):
     result_layout = QVBoxLayout(result_group)
     
     result_label = QLabel("点击'生成预测'按钮查看预测结果")
-    result_label.setAlignment(Qt.AlignCenter)
+    # result_label.setAlignment(Qt.AlignCenter)
     result_label.setWordWrap(True)
-    result_label.setStyleSheet("padding: 10px; background-color: white; border: 1px solid #DDDDDD;")
+    result_label.setStyleSheet("padding: 10px; background-color: white; border: 1px solid #DDDDDD; font-family: 'IBM Plex Mono', monospace;")
     result_label.setMinimumHeight(200)
     
     result_layout.addWidget(result_label)
@@ -179,8 +179,8 @@ def create_main_tab(main_tab):
     
     log_layout.addWidget(log_box)
     
-    content_layout.addWidget(result_group, 1)
-    content_layout.addWidget(log_group, 2)
+    content_layout.addWidget(result_group, 4)
+    content_layout.addWidget(log_group, 1)
     
     main_layout.addLayout(content_layout, 1)
     

@@ -8,6 +8,7 @@ import os
 import io
 import pandas as pd
 import numpy as np
+import openpyxl
 import torch
 import time
 import logging
@@ -19,7 +20,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import pyqtSignal, QObject, QThread, Qt, QTimer
 from PyQt5.QtGui import QPixmap
-
+from lotto import format_result
 
 from model_utils import (
     name_path, load_resources_pytorch, sample_crf_sequences
@@ -105,7 +106,7 @@ class LotteryPredictorApp(QMainWindow):
 
     def initUI(self):
         self.setWindowTitle(f"彩票预测软件 - GPU: {self.cuda_info}")
-        self.setGeometry(100, 100, 960, 680)
+        self.setGeometry(100, 100, 1800, 960)
         
         self.tab_widget = QTabWidget()
         
@@ -345,7 +346,7 @@ class LotteryPredictorApp(QMainWindow):
                         if lottery_type == "dlt":
                             result_text += f"  第 {i+1} 组: {' '.join(map(str, extra_randomness[:5]))} + {' '.join(map(str, extra_randomness[5:]))}\n"
                         else:
-                            result_text += f"  第 {i+1} 组: {' '.join(map(str, extra_randomness[:6]))} + {str(extra_randomness[6])}\n"
+                            result_text += format_result(extra_randomness)
             else:
                 # 使用机器学习模型预测
                 model_key = f"{lottery_type}_{model_type}"
@@ -405,7 +406,7 @@ class LotteryPredictorApp(QMainWindow):
                     if lottery_type == "dlt":
                         result_text += f"  第 {i+1} 组: {' '.join(map(str, red_predictions))} + {' '.join(map(str, blue_predictions))}\n"
                     else:
-                        result_text += f"  第 {i+1} 组: {' '.join(map(str, red_predictions))} + {str(blue_predictions[0])}\n"
+                        result_text += format_result(red_predictions + blue_predictions)
 
             self.result_label.setText(result_text)
 
@@ -553,6 +554,7 @@ class LotteryPredictorApp(QMainWindow):
         self.update_data_button.setEnabled(True)
         self.lottery_combo.setEnabled(True)
         self.update_log("数据更新线程已结束。")
+        self._data = None
 
     def pause_resume_training(self):
         if self.training_thread and self.training_thread.isRunning():
